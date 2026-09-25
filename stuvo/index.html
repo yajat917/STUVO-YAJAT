@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stuvo — Smart School Management Platform</title>
+  <meta name="description"
+    content="Stuvo connects students, teachers, and admins in one smart school platform. Manage classes, homework, attendance, and study goals in one place.">
+  <meta name="theme-color" content="#0A0F1E">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <meta property="og:title" content="Stuvo">
+  <meta property="og:description" content="Smart School Management Platform">
+  <meta property="og:type" content="website">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    // Apply cached language immediately to prevent English flash (Firestore re-confirms after auth)
+    try {
+      var _cachedLang = localStorage.getItem('stuvo_lang');
+      if (!_cachedLang || ['en','hi','bn','mr','te','ta'].indexOf(_cachedLang) === -1) {
+        var _nav = ((navigator.language || 'en') + '').toLowerCase().split('-')[0];
+        _cachedLang = (['en','hi','bn','mr','te','ta'].indexOf(_nav) !== -1) ? _nav : 'en';
+      }
+      document.documentElement.setAttribute('lang', _cachedLang);
+      window.currentUserLanguage = window.currentUserLanguage || _cachedLang;
+    } catch(e){}
+    // E.2 Apply accessibility cache early — expanded to prevent FOUC for all prefs
+    try {
+      const acc = JSON.parse(localStorage.getItem('stuvo_accessibility_cache')||'null');
+      if (acc) {
+        const map = { normal:'1', large:'1.15', xlarge:'1.30' };
+        if (acc.textSize && map[acc.textSize]) document.documentElement.style.setProperty('--text-scale', map[acc.textSize]);
+        if (acc.textSize) document.documentElement.setAttribute('data-text-size', acc.textSize);
+        if (acc.fontWeight) document.documentElement.setAttribute('data-font-weight', acc.fontWeight);
+        if (acc.lineSpacing) document.documentElement.setAttribute('data-line-spacing', acc.lineSpacing);
+        if (acc.focusSessionStyle) document.documentElement.setAttribute('data-focus-style', acc.focusSessionStyle);
+        if (acc.highContrast) document.documentElement.classList.add('high-contrast');
+        if (acc.dyslexiaFont) document.documentElement.classList.add('dyslexia-font');
+        if (acc.colorBlindMode) document.documentElement.classList.add('color-blind');
+        if (acc.enhancedFocus) document.documentElement.classList.add('enhanced-focus');
+        if (acc.reduceTransparency) document.documentElement.classList.add('reduce-transparency');
+        if (acc.largerTapTargets) document.documentElement.classList.add('larger-tap');
+        if (acc.noHoverDependency) document.documentElement.classList.add('no-hover');
+        if (acc.gestureAlternatives) document.documentElement.classList.add('gesture-alt');
+        if (acc.comfortableControls) document.documentElement.classList.add('comfortable');
+        if (acc.reduceVisualClutter) document.documentElement.classList.add('reduce-clutter');
+        if (acc.readingRuler) document.documentElement.classList.add('reading-ruler-active');
+        if (acc.stepByStepForms) document.documentElement.classList.add('step-by-step');
+      }
+    } catch(e){}
+  </script>
+</head>
+
+<body>
+  <div class="mesh"></div>
+  <div class="particle" style="width:4px;height:4px;top:20%;left:15%;"></div>
+  <div class="particle" style="width:3px;height:3px;top:60%;left:80%;"></div>
+  <div class="particle" style="width:5px;height:5px;top:40%;left:60%;"></div>
+  <div class="particle" style="width:3px;height:3px;top:75%;left:30%;"></div>
+
+  <!-- App Layout (authenticated) -->
+  <div class="layout" id="app-layout" style="display:none;">
+    <aside class="sidebar" id="sidebar">
+    </aside>
+    <main class="main" id="app">
+      <div class="topbar" id="topbar">
+        <div class="greeting" id="topbar-greeting">
+          <h1>Welcome</h1>
+          <p>Loading...</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="global-search-btn" class="global-search-btn" aria-label="Search" title="Search">🔍</button>
+          <div id="notification-bell"></div>
+          <div class="avatar" id="topbar-avatar">S</div>
+        </div>
+      </div>
+      <div id="router-outlet"></div>
+      <footer id="app-footer" class="app-footer" style="display:none;"></footer>
+    </main>
+  </div>
+
+  <div id="hamburger-overlay" class="hamburger-overlay hidden"></div>
+  <nav id="hamburger-drawer" class="hamburger-drawer hidden" aria-label="Mobile menu"></nav>
+
+  <nav id="mobile-bottom-nav" class="mobile-bottom-nav"></nav>
+  <header id="mobile-top-header" class="mobile-top-header"></header>
+
+  <!-- Auth container (unauthenticated) -->
+  <div id="auth-container"
+    style="display:flex;justify-content:center;align-items:center;min-height:100vh;position:relative;z-index:1;"></div>
+
+  <!-- Firebase compat SDK -->
+  <script defer src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+
+  <!-- Core helpers -->
+  <script defer src="firebase.js"></script>
+  <script defer src="cloudinary.js"></script>
+  <script defer src="components.js"></script>
+  <script defer src="i18n.js"></script>
+  <!-- Study Hub Personalization — canonical taxonomy & helpers (must load before screens) -->
+  <script defer src="lib/subjectTaxonomy.js"></script>
+  <script defer src="lib/personalization.js"></script>
+  <script defer src="lib/subjectHealth.js"></script>
+  <script defer src="lib/studyHubContext.js"></script>
+
+  <!-- Auth screens -->
+  <script defer src="screens/auth/login.js"></script>
+  <script defer src="screens/auth/pendingApproval.js"></script>
+
+  <!-- Student screens -->
+  <script defer src="screens/student/_lib/nextBestAction.js"></script>
+  <script defer src="screens/student/dashboard.js"></script>
+  <script defer src="screens/student/attendance.js"></script>
+  <script defer src="screens/student/homework.js"></script>
+  <script defer src="screens/student/testReports.js"></script>
+  <script defer src="screens/student/timetable.js"></script>
+  <script defer src="screens/student/studyHub.js"></script>
+  <script defer src="screens/student/practiceBits.js"></script>
+  <script defer src="screens/student/community.js"></script>
+  <!-- E.2-E.6 Wellbeing System -->
+  <script defer src="screens/student/accessibility.js"></script>
+  <script defer src="screens/student/wellbeing.js"></script>
+  <script defer src="screens/student/report.js"></script>
+  <script defer src="screens/student/wellbeingAssistant.js"></script>
+
+  <!-- Teacher screens -->
+  <script defer src="screens/teacher/dashboard.js"></script>
+  <script defer src="screens/teacher/classes.js"></script>
+  <script defer src="screens/teacher/classDetail.js"></script>
+  <script defer src="screens/teacher/attendance.js"></script>
+  <script defer src="screens/teacher/homework.js"></script>
+  <script defer src="screens/teacher/testReports.js"></script>
+  <script defer src="screens/teacher/timetable.js"></script>
+
+  <!-- Admin screens -->
+  <script defer src="screens/admin/dashboard.js"></script>
+  <script defer src="screens/admin/teacherApprovals.js"></script>
+  <script defer src="screens/admin/users.js"></script>
+  <script defer src="screens/admin/moderation.js"></script>
+  <script defer src="screens/admin/moderationQueue.js"></script>
+
+  <!-- Router -->
+  <script defer src="router.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').then(reg => {
+        if (reg) reg.update();
+      }).catch(() => {});
+    }
+  </script>
+</body>
+
+</html>

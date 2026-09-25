@@ -1,0 +1,214 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper functions ───────────────────────────────────────
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function userRole() {
+      return get(/databases/$(database)/documents/users/$(uid())).data.role;
+    }
+
+    function isAdmin() {
+      return isAuth() && userRole() == 'admin';
+    }
+
+    function isTeacher() {
+      return isAuth() && userRole() == 'teacher';
+    }
+
+    function isStudent() {
+      return isAuth() && userRole() == 'student';
+    }
+
+    function isTeacherOfClass(classId) {
+      return isAuth() &&
+        get(/databases/$(database)/documents/classes/$(classId)).data.teacherId == uid();
+    }
+
+    function isStudentInClass(classId) {
+      return isAuth() &&
+        uid() in get(/databases/$(database)/documents/classes/$(classId)).data.studentIds;
+    }
+
+    // ─── users ──────────────────────────────────────────────────
+    match /users/{userId} {
+      // Any authenticated user can read their own doc; admins can read all
+      allow read: if isAuth() && (uid() == userId || isAdmin());
+
+      // Teachers can search students by username — allow read of any user doc for lookup
+      allow read: if isAuth() && isTeacher();
+
+      // Create: only self-registration (first login)
+      allow create: if isAuth() && uid() == userId && (
+        (
+          request.resource.data.role in ['student', 'teacher']
+          && request.resource.data.status == (request.resource.data.role == 'teacher' ? 'pending' : 'active')
+        ) || (
+          // Seed admin can self-register as admin
+          request.resource.data.role == 'admin'
+          && request.resource.data.email == 'stuvoinnosphere@gmail.com'
+          && request.resource.data.status == 'active'
+        )
+      );
+
+      // Update rules:
+      allow update: if isAuth() && uid() == userId
+        // Seed admin may update their own doc
+        && resource.data.email == 'stuvoinnosphere@gmail.com';
+      allow update: if isAuth() && uid() == userId
+        // User may update their own doc EXCEPT: role, status, username, officialName
+        && !('role' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('status' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('username' in request.resource.data.diff(resource.data).affectedKeys())
+        && !('officialName' in request.resource.data.diff(resource.data).affectedKeys());
+
+      // Admins can update status, role, remove users
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── classes ────────────────────────────────────────────────
+    match /classes/{classId} {
+      // Students and teachers in the class can read
+      allow read: if isAuth() && (
+        isTeacherOfClass(classId) ||
+        isStudentInClass(classId) ||
+        isAdmin()
+      );
+
+      // Teachers can create classes
+      allow create: if isTeacher()
+        && request.resource.data.teacherId == uid();
+
+      // Teachers can update their own class (roster, name, etc.)
+      allow update: if isTeacherOfClass(classId);
+
+      allow delete: if isAdmin();
+
+      // ─── announcements ───────────────────────────────────────
+      match /announcements/{announcementId} {
+        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId));
+        allow create, update, delete: if isTeacherOfClass(classId);
+      }
+
+      // ─── homework ─────────────────────────────────────────────
+      match /homework/{homeworkId} {
+        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId));
+        allow create, update, delete: if isTeacherOfClass(classId);
+
+        // submissions — students write only their own, teachers read all
+        match /submissions/{studentId} {
+          allow read: if isAuth() && (uid() == studentId || isTeacherOfClass(classId) || isAdmin());
+          allow create, update: if isAuth() && uid() == studentId && isStudentInClass(classId);
+          allow delete: if isAdmin();
+        }
+      }
+
+      // ─── attendance (read-only for students) ─────────────────
+      match /attendance/{dateString} {
+        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId));
+        allow create, update, delete: if isTeacherOfClass(classId);
+      }
+
+      // ─── testReports (read-only for students) ────────────────
+      match /testReports/{reportId} {
+        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId));
+        allow create, update, delete: if isTeacherOfClass(classId);
+      }
+
+      // ─── timetable (read-only for students) ──────────────────
+      match /timetable/{slotId} {
+        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId));
+        allow create, update, delete: if isTeacherOfClass(classId);
+      }
+    }
+
+    // ─── practiceBits (student owns their own) ──────────────────
+    match /users/{studentId}/practiceBits/{dateString} {
+      allow read, write: if isAuth() && uid() == studentId;
+      allow read: if isAdmin();
+    }
+
+    // ─── studyPlanner (student owns their own) ──────────────────
+    match /users/{studentId}/studyPlanner/{document=**} {
+      allow read, write: if isAuth() && uid() == studentId;
+    }
+
+    // ─── community ──────────────────────────────────────────────
+    match /communityPosts/{postId} {
+      allow read: if isAuth();
+      // Students can create their own posts
+      allow create: if isAuth() && isStudent()
+        && request.resource.data.authorId == uid();
+      // Authors can update/delete their own posts; admins can delete any.
+      // Any authenticated user may toggle the likes array on a post.
+      allow update: if isAuth() && (
+        resource.data.authorId == uid() ||
+        isAdmin() ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+      );
+      allow delete: if isAuth() && (resource.data.authorId == uid() || isAdmin());
+
+      match /comments/{commentId} {
+        allow read: if isAuth();
+        // Author must match the signed-in user (no impersonation)
+        allow create: if isAuth()
+          && request.resource.data.authorId == uid();
+        allow update, delete: if isAuth() && (resource.data.authorId == uid() || isAdmin());
+      }
+
+      match /reports/{reportId} {
+        allow read: if isAdmin();
+        allow create: if isAuth(); // any authenticated user can report
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    // ─── wellnessReports (anonymous-friendly) ───────────────────
+    match /wellnessReports/{reportId} {
+      allow read: if isAdmin();
+      allow read: if isAuth() && resource.data.reportedByUid == request.auth.uid;
+      allow create: if isAuth(); // any authenticated user, UID optional in doc
+      allow update, delete: if isAdmin();
+    }
+
+    // ─── adminActions (audit trail) ─────────────────────────────
+    match /adminActions/{actionId} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false; // immutable audit log
+    }
+
+    // ─── Part A — New collections (additive, do not modify existing) ───
+    match /users/{userId}/studyActivity/{sessionId} { allow read, write: if isAuth() && request.auth.uid == userId; }
+    match /users/{userId}/homeworkTimingHistory/{docId} { allow read, write: if isAuth() && request.auth.uid == userId; }
+    match /users/{userId}/notifications/{docId} { allow read, write: if isAuth() && request.auth.uid == userId; }
+    match /users/{userId}/quizHistory/{docId} { allow read, write: if isAuth() && request.auth.uid == userId; }
+    match /users/{userId}/journal/{docId} { allow read, write: if isAuth() && request.auth.uid == userId; }
+    match /users/{userId}/wellbeingChats/{docId} { allow read, write: if isAuth() && request.auth.uid == userId; }
+    match /users/{userId}/wellness/{dateString} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
+    match /users/{userId}/supportRequests/{docId} {
+      allow read: if isAuth() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAuth() && request.auth.uid == userId;
+      allow update: if isAdmin();
+    }
+    // Shared read-only cache: only teachers/admins may write (prevents students
+    // overwriting revision content served to other students). Reads stay open
+    // to authenticated users for global search + revision features.
+    match /revisionCache/{docId} { allow read: if isAuth(); allow write: if isTeacher() || isAdmin(); }
+    match /classes/{classId}/extendedTimeSettings/{studentId} {
+      allow read: if isTeacherOfClass(classId) || isAdmin() || (isStudent() && request.auth.uid == studentId);
+      allow write: if isTeacherOfClass(classId) || isAdmin();
+    }
+    // ─── Study Hub Personalization — grade/stream, exam countdown, health (no extra restriction beyond owner) ───
+    match /users/{userId}/examCountdowns/{examId} { allow read, write: if isAuth() && request.auth.uid == userId; allow read: if isAdmin(); }
+  }
+}
