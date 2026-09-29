@@ -210,5 +210,15 @@ service cloud.firestore {
     }
     // ─── Study Hub Personalization — grade/stream, exam countdown, health (no extra restriction beyond owner) ───
     match /users/{userId}/examCountdowns/{examId} { allow read, write: if isAuth() && request.auth.uid == userId; allow read: if isAdmin(); }
+    // ─── Self-Study Zone (private to the individual student — NO teacher/admin exception) ───
+    match /users/{userId}/personalTimetable/{slotId} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
+    match /users/{userId}/personalTasks/{taskId} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
+    match /users/{userId}/timerPresets/{presetId} {
+      allow read, write: if isAuth() && request.auth.uid == userId;
+    }
   }
 }

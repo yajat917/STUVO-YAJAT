@@ -181,6 +181,28 @@ function todayHTML() {
                     <div id="focus-phase" style="font-size:13px;color:var(--text-dim);margin-top:4px;">Ready</div>
                 </div>
             </div>
+            <div id="focus-preset-row" style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:12px;" role="group" aria-label="${_i18n_t('studyHub.selfStudy.quickSelect', 'Quick select')}">
+                <button type="button" class="badge badge-violet" id="focus-preset-default" style="cursor:pointer;padding:7px 12px;" aria-pressed="true">${_i18n_t('studyHub.selfStudy.pomodoro', 'Pomodoro')} 25</button>
+                <span id="focus-preset-list" style="display:contents;"></span>
+                <button type="button" class="badge badge-gray" id="focus-custom-toggle" style="cursor:pointer;padding:7px 12px;">+ ${_i18n_t('studyHub.selfStudy.customPreset', 'Custom')}</button>
+            </div>
+            <div id="focus-custom-form" class="hidden" style="background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:12px;padding:12px;margin-bottom:12px;text-align:left;">
+                <div class="form-row">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="focus-preset-name">${_i18n_t('studyHub.selfStudy.presetName', 'Preset name')}</label>
+                        <input type="text" class="form-control" id="focus-preset-name" placeholder="${_i18n_t('studyHub.selfStudy.presetNamePlaceholder', 'e.g. Deep Work')}" maxlength="40">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="focus-preset-mins">${_i18n_t('studyHub.selfStudy.durationMinutes', 'Duration (minutes)')}</label>
+                        <input type="number" class="form-control" id="focus-preset-mins" min="1" max="180" value="50" inputmode="numeric">
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-sm" id="focus-preset-save" style="margin-top:0;">${_i18n_t('studyHub.selfStudy.savePreset', 'Save preset')}</button>
+                    <button type="button" class="btn btn-sm btn-secondary" id="focus-preset-cancel" style="margin-top:0;">${_i18n_t('studyHub.selfStudy.cancel', 'Cancel')}</button>
+                </div>
+                <div id="focus-preset-status" style="font-size:12px;color:var(--text-dim);margin-top:8px;" role="status"></div>
+            </div>
             <div style="display:flex;gap:12px;justify-content:center;margin-bottom:24px;">
                 <button class="btn btn-sm" id="focus-start" style="width:120px;">▶ Start</button>
                 <button class="btn btn-sm btn-secondary hidden" id="focus-pause">⏸ Pause</button>
@@ -404,6 +426,83 @@ function planHTML() {
         <div class="glass-card" id="profile-card" style="margin-top:20px;">
             <div class="card-label">My Study Profile</div>
             <div id="profile-body"><div class="spinner" style="margin:12px auto;"></div></div>
+        </div>
+        <div class="glass-card" id="self-schedule-card" style="margin-top:20px;border-left:3px solid #7C5CFC;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <div class="card-label" style="margin-bottom:0;">🗓 ${_i18n_t('studyHub.selfStudy.mySchedule', 'My Schedule')}</div>
+                <span class="badge badge-violet">${_i18n_t('studyHub.selfStudy.personalBadge', 'Personal')}</span>
+            </div>
+            <p style="font-size:12px;color:var(--text-dim);margin:8px 0 14px;line-height:1.6;">${_i18n_t('studyHub.selfStudy.privateScheduleNote', "Private to you — your teachers can't see this.")}</p>
+            <div id="self-schedule-form" class="hidden" style="background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:12px;padding:14px;margin-bottom:16px;">
+                <div id="self-slot-form-title" style="font-size:13px;font-weight:700;margin-bottom:10px;">${_i18n_t('studyHub.selfStudy.addBlock', 'Add study block')}</div>
+                <div class="form-row">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="self-slot-day">${_i18n_t('studyHub.selfStudy.day', 'Day')}</label>
+                        <select class="form-control" id="self-slot-day"></select>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="self-slot-start">${_i18n_t('studyHub.selfStudy.startTime', 'Start time')}</label>
+                        <input type="time" class="form-control" id="self-slot-start" value="09:00">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="self-slot-end">${_i18n_t('studyHub.selfStudy.endTime', 'End time')}</label>
+                        <input type="time" class="form-control" id="self-slot-end" value="09:45">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="self-slot-label">${_i18n_t('studyHub.selfStudy.label', 'Label')}</label>
+                        <input type="text" class="form-control" id="self-slot-label" placeholder="${_i18n_t('studyHub.selfStudy.labelPlaceholder', 'e.g. Physics Revision')}" maxlength="80">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="self-slot-subject">${_i18n_t('studyHub.selfStudy.subject', 'Subject')} <span style="color:var(--text-dim);">(${_i18n_t('studyHub.selfStudy.optional', 'optional')})</span></label>
+                        <select class="form-control" id="self-slot-subject"></select>
+                    </div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-sm" id="self-slot-save" style="margin-top:0;">${_i18n_t('studyHub.selfStudy.save', 'Save')}</button>
+                    <button type="button" class="btn btn-sm btn-secondary" id="self-slot-cancel" style="margin-top:0;">${_i18n_t('studyHub.selfStudy.cancel', 'Cancel')}</button>
+                </div>
+            </div>
+            <button type="button" class="btn btn-sm" id="self-slot-add" style="margin-top:0;">+ ${_i18n_t('studyHub.selfStudy.addBlock', 'Add study block')}</button>
+            <div id="self-schedule-list" style="margin-top:16px;"><div class="spinner" style="margin:16px auto;"></div></div>
+        </div>
+        <div class="glass-card" id="self-tasks-card" style="margin-top:20px;border-left:3px solid #10B981;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <div class="card-label" style="margin-bottom:0;">✅ ${_i18n_t('studyHub.selfStudy.myTasks', 'My Tasks')}</div>
+                <span class="badge badge-green">${_i18n_t('studyHub.selfStudy.personalBadge', 'Personal')}</span>
+            </div>
+            <p style="font-size:12px;color:var(--text-dim);margin:8px 0 14px;line-height:1.6;">${_i18n_t('studyHub.selfStudy.personalTasksNote', 'Personal checklist — not graded work.')}</p>
+            <div style="background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:12px;padding:14px;margin-bottom:16px;">
+                <div class="form-row">
+                    <div class="form-group" style="margin-bottom:0;flex:2;">
+                        <label for="self-task-title">${_i18n_t('studyHub.selfStudy.taskTitle', 'Title')}</label>
+                        <input type="text" class="form-control" id="self-task-title" placeholder="${_i18n_t('studyHub.selfStudy.taskTitlePlaceholder', 'e.g. Revise photosynthesis')}" maxlength="120">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="self-task-due">${_i18n_t('studyHub.selfStudy.dueDate', 'Due date')} <span style="color:var(--text-dim);">(${_i18n_t('studyHub.selfStudy.optional', 'optional')})</span></label>
+                        <input type="date" class="form-control" id="self-task-due">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="self-task-subject">${_i18n_t('studyHub.selfStudy.subject', 'Subject')} <span style="color:var(--text-dim);">(${_i18n_t('studyHub.selfStudy.optional', 'optional')})</span></label>
+                        <select class="form-control" id="self-task-subject"></select>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;display:flex;align-items:flex-end;">
+                        <button type="button" class="btn btn-sm" id="self-task-add" style="margin-top:0;">+ ${_i18n_t('studyHub.selfStudy.addTask', 'Add task')}</button>
+                    </div>
+                </div>
+            </div>
+            <div style="font-size:12px;color:var(--text-dim);font-weight:600;margin-bottom:8px;">${_i18n_t('studyHub.selfStudy.incomplete', 'To do')}</div>
+            <div id="self-tasks-open"><div class="spinner" style="margin:12px auto;"></div></div>
+            <div id="self-tasks-done-wrap" style="margin-top:14px;">
+                <div id="self-tasks-done-toggle" role="button" tabindex="0" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;font-size:12px;color:var(--text-dim);font-weight:600;">
+                    <span>${_i18n_t('studyHub.selfStudy.completed', 'Completed')}</span>
+                    <span id="self-tasks-done-count"></span>
+                </div>
+                <div id="self-tasks-done" style="display:none;margin-top:8px;opacity:0.85;"></div>
+            </div>
         </div>
     `;
 }
@@ -716,6 +815,122 @@ function bindToday(container, ctx) {
         }).join('');
     }
     paintFocusBase();
+    // ── Custom timer presets (Self-Study Zone — private to this student) ──
+    // Duration-selection step ONLY. The start/tick/reset/completion logic below
+    // is reused untouched, so the partial-session-on-reset fix applies to custom
+    // durations automatically (reset/complete XP is pro-rated from WORK).
+    var focusPresetOverrideMin = null;
+    var focusPresets = [];
+    function focusPresetCacheKey() {
+        var u = (typeof appState !== 'undefined' && appState.user && appState.user.uid) ? appState.user.uid : 'anon';
+        return 'stuvo_timer_presets_' + u;
+    }
+    function readFocusPresetCache() {
+        try {
+            var raw = localStorage.getItem(focusPresetCacheKey());
+            if (!raw) return [];
+            var arr = JSON.parse(raw);
+            return Array.isArray(arr) ? arr : [];
+        } catch (e) { return []; }
+    }
+    function writeFocusPresetCache(list) {
+        try { localStorage.setItem(focusPresetCacheKey(), JSON.stringify(list.slice(0, 20))); } catch (e) {}
+    }
+    function paintFocusPresets() {
+        var host = container.querySelector('#focus-preset-list');
+        var defBtn = container.querySelector('#focus-preset-default');
+        if (!host) return;
+        host.innerHTML = '';
+        focusPresets.forEach(function (p) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'badge ' + (focusPresetOverrideMin === p.durationMinutes ? 'badge-violet' : 'badge-gray');
+            b.style.cssText = 'cursor:pointer;padding:7px 12px;';
+            b.textContent = p.name + ' · ' + p.durationMinutes + 'm';
+            b.setAttribute('aria-pressed', focusPresetOverrideMin === p.durationMinutes ? 'true' : 'false');
+            b.addEventListener('click', function () {
+                if (focusPhase !== 'idle') { showToast(_i18n_t('studyHub.selfStudy.resetFirst', 'Reset the timer before switching duration.'), 'error'); return; }
+                focusPresetOverrideMin = p.durationMinutes;
+                refreshFocusDurations();
+                paintFocusPresets();
+            });
+            host.appendChild(b);
+        });
+        if (defBtn) {
+            var isDefault = !focusPresetOverrideMin;
+            defBtn.className = 'badge ' + (isDefault ? 'badge-violet' : 'badge-gray');
+            defBtn.setAttribute('aria-pressed', isDefault ? 'true' : 'false');
+        }
+    }
+    async function loadFocusPresets() {
+        var uid = (typeof appState !== 'undefined' && appState.user && appState.user.uid) ? appState.user.uid : null;
+        if (!uid) { focusPresets = readFocusPresetCache(); paintFocusPresets(); return; }
+        try {
+            var snap = await getDocs(collection(db, 'users', uid, 'timerPresets'));
+            var list = [];
+            snap.forEach(function (d) {
+                var v = d.data() || {};
+                var mins = Math.floor(Number(v.durationMinutes));
+                if (v.name && mins >= 1 && mins <= 180) list.push({ id: d.id, name: String(v.name).slice(0, 40), durationMinutes: mins });
+            });
+            list.sort(function (a, b) { return a.durationMinutes - b.durationMinutes; });
+            focusPresets = list.slice(0, 20);
+            writeFocusPresetCache(focusPresets);
+        } catch (e) {
+            focusPresets = readFocusPresetCache();
+        }
+        paintFocusPresets();
+    }
+    function bindFocusPresetUI() {
+        var toggle = container.querySelector('#focus-custom-toggle');
+        var form = container.querySelector('#focus-custom-form');
+        var defBtn = container.querySelector('#focus-preset-default');
+        if (toggle && form) {
+            toggle.addEventListener('click', function () { form.classList.toggle('hidden'); });
+        }
+        container.querySelector('#focus-preset-cancel')?.addEventListener('click', function () {
+            if (form) form.classList.add('hidden');
+        });
+        if (defBtn) {
+            defBtn.addEventListener('click', function () {
+                if (focusPhase !== 'idle') { showToast(_i18n_t('studyHub.selfStudy.resetFirst', 'Reset the timer before switching duration.'), 'error'); return; }
+                focusPresetOverrideMin = null;
+                refreshFocusDurations();
+                paintFocusPresets();
+            });
+        }
+        container.querySelector('#focus-preset-save')?.addEventListener('click', async function () {
+            var nameEl = container.querySelector('#focus-preset-name');
+            var minsEl = container.querySelector('#focus-preset-mins');
+            var statusEl = container.querySelector('#focus-preset-status');
+            var btn = container.querySelector('#focus-preset-save');
+            var name = nameEl ? nameEl.value.trim().slice(0, 40) : '';
+            var mins = minsEl ? Math.floor(Number(minsEl.value)) : NaN;
+            if (!name) { showToast(_i18n_t('studyHub.selfStudy.titleRequired', 'Please enter a title.'), 'error'); return; }
+            if (!(mins >= 1 && mins <= 180)) { showToast(_i18n_t('studyHub.selfStudy.durationRequired', 'Enter a duration between 1 and 180 minutes.'), 'error'); return; }
+            var uid = (typeof appState !== 'undefined' && appState.user && appState.user.uid) ? appState.user.uid : null;
+            if (!uid) { showToast(_i18n_t('common.error', 'Something went wrong'), 'error'); return; }
+            btn.disabled = true;
+            if (statusEl) statusEl.textContent = _i18n_t('common.loading', 'Loading...');
+            try {
+                var ref = await addDoc(collection(db, 'users', uid, 'timerPresets'), { name: name, durationMinutes: mins, createdAt: serverTimestamp() });
+                focusPresets.push({ id: ref.id, name: name, durationMinutes: mins });
+                focusPresets.sort(function (a, b) { return a.durationMinutes - b.durationMinutes; });
+                writeFocusPresetCache(focusPresets);
+                paintFocusPresets();
+                if (nameEl) nameEl.value = '';
+                if (form) form.classList.add('hidden');
+                showToast(name + ' · ' + mins + 'm ✓', 'success');
+            } catch (e) {
+                showToast((e && e.message) || _i18n_t('common.error', 'Something went wrong'), 'error');
+            } finally {
+                btn.disabled = false;
+                if (statusEl) statusEl.textContent = '';
+            }
+        });
+        loadFocusPresets();
+    }
+    bindFocusPresetUI();
     function getFocusDurations() {
         const style = (window._accessPrefsCache && window._accessPrefsCache.focusSessionStyle) || 'standard';
         if (style === 'flexible') return { WORK: 45 * 60, BREAK: 10 * 60, labelWork: 'Flexible Focus', labelBreak: 'Gentle Break', xp: 35 };
@@ -773,6 +988,7 @@ function bindToday(container, ctx) {
     function refreshFocusDurations() {
         _dur = getFocusDurations();
         WORK = _dur.WORK; BREAK_TIME = _dur.BREAK;
+        if (focusPresetOverrideMin && focusPhase === 'idle') WORK = focusPresetOverrideMin * 60;
         if (focusPhase === 'idle') focusSecondsLeft = WORK;
         var b2 = container.querySelector('#focus-style-badge');
         if (b2) b2.textContent = WORK / 60 + '/' + BREAK_TIME / 60 + ' min';
@@ -788,7 +1004,7 @@ function bindToday(container, ctx) {
     container.querySelector('#focus-start')?.addEventListener('click', () => {
         if (window._focusRunning && focusInterval) return; // already ticking — ignore double-start
         if (focusPhase === 'idle') {
-            _dur = getFocusDurations(); WORK = _dur.WORK; BREAK_TIME = _dur.BREAK; focusSecondsLeft = WORK; gentleReminderDone = false;
+            _dur = getFocusDurations(); WORK = _dur.WORK; BREAK_TIME = _dur.BREAK; if (focusPresetOverrideMin) WORK = focusPresetOverrideMin * 60; focusSecondsLeft = WORK; gentleReminderDone = false;
             focusPhase = 'work';
             focusSessionStartEpoch = Date.now(); focusPauseEpoch = null;
         } else if (focusPauseEpoch && focusSessionStartEpoch) {
@@ -1801,4 +2017,329 @@ function bindPlan(container, ctx) {
             window.location.hash = '#/student/accessibility';
         });
     }
+
+    // ── Self-Study Zone (private personal layer — never teacher-visible) ──
+    bindSelfStudy(container, ctx);
+}
+
+// ══════════════════════════════════════════════════════════════
+// SELF-STUDY ZONE — My Schedule + My Tasks (student-private)
+// All reads/writes scoped to users/{uid}/personalTimetable|personalTasks.
+// No teacher/admin screen queries these collections (privacy by absence,
+// enforced by Firestore rules: owner-uid match only, no exceptions).
+// ══════════════════════════════════════════════════════════════
+function bindSelfStudy(container, ctx) {
+    if (!container.querySelector('#self-schedule-card') || !container.querySelector('#self-tasks-card')) return;
+    var SELF_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    var subjects = (ctx && ctx.subjects && ctx.subjects.length) ? ctx.subjects : SUBJECT_OPTIONS.slice();
+
+    function selfUid() {
+        return (typeof appState !== 'undefined' && appState.user && appState.user.uid) ? appState.user.uid : null;
+    }
+    function toDateSafe(v) {
+        try {
+            if (!v) return null;
+            if (v.toDate) return v.toDate();
+            var d = new Date(v);
+            return isNaN(d) ? null : d;
+        } catch (e) { return null; }
+    }
+    function fmtDue(v) {
+        var d = toDateSafe(v);
+        if (!d) return '';
+        try {
+            var loc = (typeof stuvoBcp47 === 'function' ? stuvoBcp47(window.currentUserLanguage || 'en') : 'en-IN');
+            return d.toLocaleDateString(loc, { day: 'numeric', month: 'short', year: 'numeric' });
+        } catch (e) { return d.toISOString().split('T')[0]; }
+    }
+
+    // ── Shared subject selects ──
+    var slotSubjectSel = container.querySelector('#self-slot-subject');
+    if (slotSubjectSel) slotSubjectSel.innerHTML = '<option value="">—</option>' + subjects.map(function (s) {
+        return '<option value="' + shEsc(s) + '">' + shEsc(s) + '</option>';
+    }).join('');
+    var taskSubjectSel = container.querySelector('#self-task-subject');
+    if (taskSubjectSel) taskSubjectSel.innerHTML = '<option value="">—</option>' + subjects.map(function (s) {
+        return '<option value="' + shEsc(s) + '">' + shEsc(s) + '</option>';
+    }).join('');
+    var daySel = container.querySelector('#self-slot-day');
+    if (daySel) daySel.innerHTML = SELF_DAYS.map(function (d) { return '<option value="' + d + '">' + d + '</option>'; }).join('');
+
+    // ═══ My Schedule ═══
+    var editingSlotId = null;
+    var lastSlots = [];
+
+    function slotForm(show) {
+        var f = container.querySelector('#self-schedule-form');
+        var addBtn = container.querySelector('#self-slot-add');
+        if (!f) return;
+        if (show) {
+            f.classList.remove('hidden');
+            if (addBtn) addBtn.classList.add('hidden');
+        } else {
+            f.classList.add('hidden');
+            if (addBtn) addBtn.classList.remove('hidden');
+        }
+    }
+    function resetSlotForm() {
+        editingSlotId = null;
+        var formTitle = container.querySelector('#self-slot-form-title');
+        if (formTitle) formTitle.textContent = _i18n_t('studyHub.selfStudy.addBlock', 'Add study block');
+        if (daySel) daySel.value = SELF_DAYS[0];
+        var st = container.querySelector('#self-slot-start'); if (st) st.value = '09:00';
+        var en = container.querySelector('#self-slot-end'); if (en) en.value = '09:45';
+        var lb = container.querySelector('#self-slot-label'); if (lb) lb.value = '';
+        if (slotSubjectSel) slotSubjectSel.value = '';
+    }
+
+    async function loadSchedule() {
+        var host = container.querySelector('#self-schedule-list');
+        if (!host) return;
+        var id = selfUid();
+        if (!id) { host.innerHTML = '<div style="font-size:13px;color:var(--text-dim);padding:12px;">Sign in to see your schedule.</div>'; return; }
+        host.innerHTML = '<div class="spinner" style="margin:16px auto;"></div>';
+        try {
+            var snap = await getDocs(collection(db, 'users', id, 'personalTimetable'));
+            var slots = [];
+            snap.forEach(function (d) { slots.push(Object.assign({ id: d.id }, d.data())); });
+            lastSlots = slots;
+            renderSchedule(slots);
+        } catch (e) {
+            host.innerHTML = '<div style="font-size:13px;color:#FCA5A5;padding:12px;">' + shEsc((e && e.message) || '') + '</div>';
+        }
+    }
+
+    function renderSchedule(slots) {
+        var host = container.querySelector('#self-schedule-list');
+        if (!host) return;
+        if (!slots.length) {
+            host.innerHTML = '<div class="empty-state"><div class="empty-icon">🗓</div>' +
+                '<div class="empty-title">' + shEsc(_i18n_t('studyHub.selfStudy.emptySchedule', 'Your personal schedule is empty. Add a study block to get started.')) + '</div></div>';
+            return;
+        }
+        var todayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
+        var byDay = {};
+        SELF_DAYS.forEach(function (d) { byDay[d] = []; });
+        slots.forEach(function (s) {
+            if (byDay[s.day]) byDay[s.day].push(s);
+            else byDay[s.day] = [s];
+        });
+        Object.keys(byDay).forEach(function (k) {
+            byDay[k].sort(function (a, b) { return String(a.startTime || '').localeCompare(String(b.startTime || '')); });
+        });
+        host.innerHTML = SELF_DAYS.filter(function (d) { return (byDay[d] || []).length; }).map(function (day) {
+            var isToday = day === todayName;
+            return '<div style="margin-bottom:12px;">' +
+                '<div style="font-size:12px;font-weight:700;color:' + (isToday ? '#C4B5FD' : 'var(--text-dim)') + ';margin-bottom:6px;">' +
+                shEsc(day) + (isToday ? ' · ' + shEsc(_i18n_t('timetable.today', 'Today')) : '') + '</div>' +
+                byDay[day].map(function (s) {
+                    return '<div class="hw-item"><div style="flex:1;min-width:0;">' +
+                        '<div class="hw-title">' + shEsc(s.label || s.subject || '') + '</div>' +
+                        '<div class="hw-sub">' + shEsc(s.startTime || '') + '–' + shEsc(s.endTime || '') + (s.subject ? ' · ' + shEsc(s.subject) : '') + '</div>' +
+                        '</div><div style="display:flex;gap:6px;flex-shrink:0;">' +
+                        '<button type="button" class="btn btn-secondary btn-sm" data-slot-edit="' + s.id + '" style="margin-top:0;">' + shEsc(_i18n_t('studyHub.selfStudy.edit', 'Edit')) + '</button>' +
+                        '<button type="button" class="btn btn-secondary btn-sm" data-slot-del="' + s.id + '" style="margin-top:0;background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.3);color:#FCA5A5;" aria-label="' + shEsc(_i18n_t('studyHub.selfStudy.delete', 'Delete')) + ' ' + shEsc(s.label || '') + '">' + shEsc(_i18n_t('studyHub.selfStudy.delete', 'Delete')) + '</button>' +
+                        '</div></div>';
+                }).join('') + '</div>';
+        }).join('');
+        host.querySelectorAll('[data-slot-edit]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var sid = btn.dataset.slotEdit;
+                var s = lastSlots.find(function (x) { return x.id === sid; });
+                if (!s) return;
+                editingSlotId = sid;
+                var formTitle = container.querySelector('#self-slot-form-title');
+                if (formTitle) formTitle.textContent = _i18n_t('studyHub.selfStudy.editBlock', 'Edit study block');
+                if (daySel) daySel.value = s.day || SELF_DAYS[0];
+                var st = container.querySelector('#self-slot-start'); if (st) st.value = s.startTime || '09:00';
+                var en = container.querySelector('#self-slot-end'); if (en) en.value = s.endTime || '09:45';
+                var lb = container.querySelector('#self-slot-label'); if (lb) lb.value = s.label || '';
+                if (slotSubjectSel) slotSubjectSel.value = s.subject || '';
+                slotForm(true);
+                var form = container.querySelector('#self-schedule-form');
+                if (form && form.scrollIntoView) form.scrollIntoView({ block: 'nearest' });
+            });
+        });
+        host.querySelectorAll('[data-slot-del]').forEach(function (btn) {
+            btn.addEventListener('click', async function () {
+                var sid = btn.dataset.slotDel;
+                if (!confirm(_i18n_t('studyHub.selfStudy.confirmDelete', 'Delete this item?'))) return;
+                btn.disabled = true;
+                try {
+                    await deleteDoc(doc(db, 'users', selfUid(), 'personalTimetable', sid));
+                    showToast(_i18n_t('studyHub.selfStudy.delete', 'Delete') + ' ✓', 'success');
+                    loadSchedule();
+                } catch (e) {
+                    showToast((e && e.message) || _i18n_t('common.error', 'Something went wrong'), 'error');
+                    btn.disabled = false;
+                }
+            });
+        });
+    }
+
+    container.querySelector('#self-slot-add')?.addEventListener('click', function () {
+        resetSlotForm();
+        slotForm(true);
+    });
+    container.querySelector('#self-slot-cancel')?.addEventListener('click', function () {
+        resetSlotForm();
+        slotForm(false);
+    });
+    container.querySelector('#self-slot-save')?.addEventListener('click', async function () {
+        var id = selfUid();
+        if (!id) return;
+        var day = daySel ? daySel.value : SELF_DAYS[0];
+        var startEl = container.querySelector('#self-slot-start');
+        var endEl = container.querySelector('#self-slot-end');
+        var labelEl = container.querySelector('#self-slot-label');
+        var start = startEl ? startEl.value : '';
+        var end = endEl ? endEl.value : '';
+        var label = labelEl ? labelEl.value.trim().slice(0, 80) : '';
+        var subject = slotSubjectSel && slotSubjectSel.value ? slotSubjectSel.value : null;
+        if (!label) { showToast(_i18n_t('studyHub.selfStudy.titleRequired', 'Please enter a title.'), 'error'); return; }
+        if (!start || !end || start >= end) { showToast(_i18n_t('studyHub.selfStudy.invalidTime', 'End time must be after start time.'), 'error'); return; }
+        var btn = container.querySelector('#self-slot-save');
+        btn.disabled = true;
+        try {
+            if (editingSlotId) {
+                await updateDoc(doc(db, 'users', id, 'personalTimetable', editingSlotId), { day: day, startTime: start, endTime: end, label: label, subject: subject });
+            } else {
+                await addDoc(collection(db, 'users', id, 'personalTimetable'), { day: day, startTime: start, endTime: end, label: label, subject: subject, createdAt: serverTimestamp() });
+            }
+            resetSlotForm();
+            slotForm(false);
+            showToast(_i18n_t('studyHub.selfStudy.save', 'Save') + ' ✓', 'success');
+            loadSchedule();
+        } catch (e) {
+            showToast((e && e.message) || _i18n_t('common.error', 'Something went wrong'), 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    // ═══ My Tasks ═══
+    function taskRow(t) {
+        var due = fmtDue(t.dueDate);
+        return '<div class="hw-item"><input type="checkbox" data-task-toggle="' + t.id + '"' + (t.completed ? ' checked' : '') +
+            ' style="width:18px;height:18px;accent-color:#10B981;cursor:pointer;flex-shrink:0;"' +
+            ' aria-label="' + shEsc(_i18n_t(t.completed ? 'studyHub.selfStudy.markIncomplete' : 'studyHub.selfStudy.markComplete', t.completed ? 'Mark not complete' : 'Mark complete')) + ' ' + shEsc(t.title || '') + '">' +
+            '<div style="flex:1;min-width:0;"><div class="hw-title"' + (t.completed ? ' style="text-decoration:line-through;opacity:0.7;"' : '') + '>' + shEsc(t.title || '') + '</div>' +
+            '<div class="hw-sub">' + (t.subject ? shEsc(t.subject) + ' · ' : '') + shEsc(due) + '</div></div>' +
+            '<button type="button" class="btn btn-secondary btn-sm" data-task-del="' + t.id + '" style="margin-top:0;background:rgba(239,68,68,0.12);border-color:rgba(239,68,68,0.3);color:#FCA5A5;flex-shrink:0;" aria-label="' + shEsc(_i18n_t('studyHub.selfStudy.delete', 'Delete')) + ' ' + shEsc(t.title || '') + '">' + shEsc(_i18n_t('studyHub.selfStudy.delete', 'Delete')) + '</button></div>';
+    }
+
+    async function loadTasks() {
+        var openHost = container.querySelector('#self-tasks-open');
+        if (!openHost) return;
+        var id = selfUid();
+        if (!id) { openHost.innerHTML = '<div style="font-size:13px;color:var(--text-dim);padding:12px;">Sign in to see your tasks.</div>'; return; }
+        openHost.innerHTML = '<div class="spinner" style="margin:12px auto;"></div>';
+        try {
+            var snap = await getDocs(collection(db, 'users', id, 'personalTasks'));
+            var tasks = [];
+            snap.forEach(function (d) { tasks.push(Object.assign({ id: d.id }, d.data())); });
+            renderTasks(tasks);
+        } catch (e) {
+            openHost.innerHTML = '<div style="font-size:13px;color:#FCA5A5;padding:12px;">' + shEsc((e && e.message) || '') + '</div>';
+        }
+    }
+
+    function renderTasks(tasks) {
+        var openHost = container.querySelector('#self-tasks-open');
+        var doneHost = container.querySelector('#self-tasks-done');
+        var doneCount = container.querySelector('#self-tasks-done-count');
+        if (!openHost || !doneHost) return;
+        var open = tasks.filter(function (t) { return !t.completed; });
+        var done = tasks.filter(function (t) { return t.completed; });
+        open.sort(function (a, b) {
+            var da = toDateSafe(a.dueDate), db = toDateSafe(b.dueDate);
+            var ma = da ? da.getTime() : Infinity, mb = db ? db.getTime() : Infinity;
+            if (ma !== mb) return ma - mb;
+            return String(a.title || '').localeCompare(String(b.title || ''));
+        });
+        done.sort(function (a, b) {
+            var ca = toDateSafe(a.completedAt), cb = toDateSafe(b.completedAt);
+            return (cb ? cb.getTime() : 0) - (ca ? ca.getTime() : 0);
+        });
+        openHost.innerHTML = open.length ? open.map(taskRow).join('') :
+            '<div class="empty-state"><div class="empty-icon">✅</div>' +
+            '<div class="empty-title">' + shEsc(_i18n_t('studyHub.selfStudy.emptyTasks', 'No personal tasks yet. Add something you want to work on.')) + '</div></div>';
+        doneHost.innerHTML = done.length ? done.map(taskRow).join('') :
+            '<div style="font-size:12px;color:var(--text-dim);padding:6px 0;">—</div>';
+        if (doneCount) doneCount.textContent = done.length ? String(done.length) : '';
+        container.querySelectorAll('[data-task-toggle]').forEach(function (cb) {
+            cb.addEventListener('change', async function () {
+                var tid = cb.dataset.taskToggle;
+                cb.disabled = true;
+                try {
+                    await updateDoc(doc(db, 'users', selfUid(), 'personalTasks', tid), { completed: cb.checked, completedAt: cb.checked ? serverTimestamp() : null });
+                    loadTasks();
+                } catch (e) {
+                    showToast((e && e.message) || _i18n_t('common.error', 'Something went wrong'), 'error');
+                    cb.disabled = false;
+                }
+            });
+        });
+        container.querySelectorAll('[data-task-del]').forEach(function (btn) {
+            btn.addEventListener('click', async function () {
+                var tid = btn.dataset.taskDel;
+                if (!confirm(_i18n_t('studyHub.selfStudy.confirmDelete', 'Delete this item?'))) return;
+                btn.disabled = true;
+                try {
+                    await deleteDoc(doc(db, 'users', selfUid(), 'personalTasks', tid));
+                    showToast(_i18n_t('studyHub.selfStudy.delete', 'Delete') + ' ✓', 'success');
+                    loadTasks();
+                } catch (e) {
+                    showToast((e && e.message) || _i18n_t('common.error', 'Something went wrong'), 'error');
+                    btn.disabled = false;
+                }
+            });
+        });
+    }
+
+    container.querySelector('#self-task-add')?.addEventListener('click', async function () {
+        var id = selfUid();
+        if (!id) return;
+        var titleEl = container.querySelector('#self-task-title');
+        var title = titleEl ? titleEl.value.trim().slice(0, 120) : '';
+        if (!title) { showToast(_i18n_t('studyHub.selfStudy.titleRequired', 'Please enter a title.'), 'error'); return; }
+        var subject = taskSubjectSel && taskSubjectSel.value ? taskSubjectSel.value : null;
+        var dueEl = container.querySelector('#self-task-due');
+        var dueStr = dueEl ? dueEl.value : '';
+        var dueDate = null;
+        if (dueStr) {
+            var dd = new Date(dueStr + 'T12:00:00');
+            if (!isNaN(dd)) dueDate = (typeof Timestamp !== 'undefined' && Timestamp.fromDate) ? Timestamp.fromDate(dd) : dd;
+        }
+        var btn = container.querySelector('#self-task-add');
+        btn.disabled = true;
+        try {
+            await addDoc(collection(db, 'users', id, 'personalTasks'), { title: title, subject: subject, dueDate: dueDate, completed: false, createdAt: serverTimestamp(), completedAt: null });
+            if (titleEl) titleEl.value = '';
+            if (dueEl) dueEl.value = '';
+            if (taskSubjectSel) taskSubjectSel.value = '';
+            showToast(_i18n_t('studyHub.selfStudy.save', 'Save') + ' ✓', 'success');
+            loadTasks();
+        } catch (e) {
+            showToast((e && e.message) || _i18n_t('common.error', 'Something went wrong'), 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    var doneToggle = container.querySelector('#self-tasks-done-toggle');
+    if (doneToggle) {
+        var flipDone = function () {
+            var dh = container.querySelector('#self-tasks-done');
+            if (!dh) return;
+            dh.style.display = dh.style.display === 'none' ? 'block' : 'none';
+        };
+        doneToggle.addEventListener('click', flipDone);
+        doneToggle.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flipDone(); }
+        });
+    }
+
+    loadSchedule();
+    loadTasks();
 }
