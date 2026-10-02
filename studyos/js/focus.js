@@ -18,12 +18,17 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("reset-btn").addEventListener("click", reset);
 });
 
+function localDay(d) {
+  const t = d instanceof Date ? d : new Date();
+  return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+}
+
 function renderFocusStats() {
   const data = getData();
-  const today = new Date().toISOString().split("T")[0];
+  const today = localDay();
   const todaySessions = (data.focusHistory || []).filter(h => h.date === today);
   const count = todaySessions.length;
-  const time = todaySessions.reduce((sum, h) => sum + h.duration, 0);
+  const time = todaySessions.reduce((sum, h) => sum + (Number(h.duration) || 0), 0);
 
   document.getElementById("today-sessions").textContent = count;
   document.getElementById("today-time").textContent = time + "m";
@@ -60,7 +65,7 @@ function onComplete() {
   if (phase === "work") {
     sessions++;
     const data = getData();
-    const today = new Date().toISOString().split("T")[0];
+    const today = localDay();
     const newHistory = [...(data.focusHistory || [])];
     newHistory.push({ date: today, duration: 25 }); // 25 min session
 
@@ -107,7 +112,7 @@ function reset() {
     const elapsedMinutes = Math.floor((WORK - secondsLeft) / 60);
     if (elapsedMinutes >= 1) {
       const data = getData();
-      const today = new Date().toISOString().split("T")[0];
+      const today = localDay();
       const newHistory = [...(data.focusHistory || [])];
       newHistory.push({ date: today, duration: elapsedMinutes, partial: true });
       sessions++;

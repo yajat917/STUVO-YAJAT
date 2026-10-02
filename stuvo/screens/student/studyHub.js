@@ -75,6 +75,50 @@ function shSubjectOptions(subjects, selected) {
         return '<option value="' + esc + '"' + (s === selected ? ' selected' : '') + '>' + esc + '</option>';
     }).join('');
 }
+// Local calendar day (YYYY-MM-DD). Focus history is keyed by day, so local
+// time is used instead of UTC to avoid off-by-one around midnight.
+function shTodayStr(d) {
+    var t = d instanceof Date ? d : new Date();
+    var m = String(t.getMonth() + 1).padStart(2, '0');
+    var day = String(t.getDate()).padStart(2, '0');
+    return t.getFullYear() + '-' + m + '-' + day;
+}
+// Best-effort mirror of a focus session into Firestore studyActivity so the
+// Track tab (Weekly Stats / recentActivity) sees focus time on any device.
+// Local localStorage save is the source of truth; failures here never block it.
+function shMirrorFocusToActivity(durationMinutes) {
+    try {
+        var uid = (typeof appState !== 'undefined' && appState.user && appState.user.uid) ? appState.user.uid : null;
+        if (!uid) return;
+        if (typeof db === 'undefined' || !db) return;
+        if (typeof collection !== 'function' || typeof addDoc !== 'function') return;
+        var mins = Math.max(1, Math.floor(Number(durationMinutes) || 0));
+        if (!(mins >= 1)) return;
+        var payload = { type: 'focus', subject: 'General', durationMinutes: mins, relatedHomeworkId: null, relatedClassId: null };
+        try {
+            if (typeof serverTimestamp === 'function') payload.completedAt = serverTimestamp();
+            else payload.completedAt = new Date().toISOString();
+        } catch (e) { payload.completedAt = new Date().toISOString(); }
+        try { window._shTrackDirty = true; } catch (e) {}
+        addDoc(collection(db, 'users', uid, 'studyActivity'), payload).then(function () {
+            try { _shCtx = null; if (typeof resetStudyHubContext === 'function') resetStudyHubContext(); } catch (e) {}
+            try { window._shTrackDirty = true; } catch (e) {}
+        }).catch(function () {});
+    } catch (e) {}
+}
+// Re-render Track progress + charts when focus data changed since Track was
+// last rendered. Merges localStorage so it works even before Firestore sync.
+function shRefreshTrack(container) {
+    try {
+        var ctx = null;
+        try { ctx = (typeof window !== 'undefined' && window.studyHubContext && window.studyHubContext.uid) ? window.studyHubContext : (container && container._shCtx ? container._shCtx : null); } catch (e) {}
+        if (!ctx && container && container._shCtx) ctx = container._shCtx;
+        if (!ctx) return;
+        if (typeof loadTrackProgress === 'function') loadTrackProgress(container, ctx);
+        if (typeof refreshTrackCharts === 'function') refreshTrackCharts(container);
+        try { window._shTrackDirty = false; } catch (e) {}
+    } catch (e) {}
+}
 function getHealthStatusConfig(status) {
     var map = {
         strong: { icon: '●', badge: 'badge-green', color: 'var(--success)', label: 'Strong', desc: 'doing great' },
@@ -664,6 +708,13 @@ function renderStudentStudyHub(container, params = {}) {
         tabsRoot.querySelectorAll('.tab-panel').forEach(function (p) {
             p.classList.toggle('active', p.id === 'sh-section-' + id);
         });
+        // Track shows merged focus data; refresh it when returning after a
+        // focus save so the new session is visible without a page reload.
+        if (id === 'track') {
+            try {
+                if (window._shTrackDirty) shRefreshTrack(container);
+            } catch (e) {}
+        }
         if (anchor) {
             var el = container.querySelector('#' + anchor);
             if (el && el.scrollIntoView) setTimeout(function () { el.scrollIntoView({ block: 'start' }); }, 60);
@@ -722,6 +773,7 @@ function renderStudentStudyHub(container, params = {}) {
         var l = container.querySelector('#study-hub-context-loading');
         if (l) l.remove();
         container.querySelector('#study-hub-tabs').classList.remove('hidden');
+        try { container._shCtx = ctx; } catch (e) {}
 
         bindToday(container, ctx);
         bindLearn(container, ctx);
@@ -798,7 +850,7 @@ function bindToday(container, ctx) {
 
     // Focus Mode (preserved: flexible session styles from accessibility prefs)
     var d = getData();
-    var today = new Date().toISOString().split('T')[0];
+    var today = shTodayStr();
     var todaySessions = (d.focusHistory || []).filter(function (h) { return h.date === today; });
     function paintFocusBase() {
         var tc = container.querySelector('#focus-today-count');
@@ -806,8 +858,10 @@ function bindToday(container, ctx) {
         var xpEl = container.querySelector('#focus-xp');
         var bd = container.querySelector('#focus-badges');
         var dd = getData();
-        if (tc) tc.textContent = (dd.focusHistory || []).filter(function (h) { return h.date === today; }).length;
-        if (tt) tt.textContent = (dd.focusHistory || []).filter(function (h) { return h.date === today; }).reduce(function (s, h) { return s + h.duration; }, 0) + 'm';
+        var freshDay = shTodayStr();
+        var daySessions = (dd.focusHistory || []).filter(function (h) { return h.date === freshDay; });
+        if (tc) tc.textContent = daySessions.length;
+        if (tt) tt.textContent = daySessions.reduce(function (s, h) { return s + (Number(h.duration) || 0); }, 0) + 'm';
         if (xpEl) xpEl.textContent = dd.gamification.xp + ' XP';
         if (bd) bd.innerHTML = BADGES_DEF.map(function (b) {
             var earned = dd.gamification.badges.includes(b.id);
@@ -971,14 +1025,18 @@ function bindToday(container, ctx) {
             if (focusPhase === 'work') {
                 const dd = getData();
                 const dur = WORK / 60;
-                const history = [...(dd.focusHistory || []), { date: today, duration: dur }];
+                const focusDay = shTodayStr();
+                const history = [...(dd.focusHistory || []), { date: focusDay, duration: dur }];
                 saveData({ focusHistory: history, gamification: { ...dd.gamification, focusSessions: (dd.gamification.focusSessions || 0) + 1 } });
                 addXP(_dur.xp || 25);
+                shMirrorFocusToActivity(dur);
+                try { window._shTrackDirty = true; } catch (e) {}
                 focusSessionStartEpoch = null; focusPauseEpoch = null;
                 focusPhase = 'break'; focusSecondsLeft = BREAK_TIME;
                 gentleReminderDone = false;
                 showToast(`Focus session complete! Take a ${BREAK_TIME / 60}-min break. +${_dur.xp || 25} XP 🎉`, 'success');
                 paintFocusBase();
+                shRefreshTrack(container);
             } else { focusPhase = 'work'; focusSecondsLeft = WORK; gentleReminderDone = false; focusSessionStartEpoch = Date.now(); focusPauseEpoch = null; }
             updateFocusDisplay(); return;
         }
@@ -1039,13 +1097,16 @@ function bindToday(container, ctx) {
             const elapsedMinutes = focusSessionStartEpoch ? wallMinutes : tickMinutes;
             if (elapsedMinutes >= 1) {
                 const dd = getData();
-                const history = [...(dd.focusHistory || []), { date: today, duration: elapsedMinutes, partial: true }];
+                const history = [...(dd.focusHistory || []), { date: shTodayStr(), duration: elapsedMinutes, partial: true }];
                 const saved = saveData({ focusHistory: history, gamification: { ...dd.gamification, focusSessions: (dd.gamification.focusSessions || 0) + 1 } });
                 if (saved) {
                     const rate = (_dur.xp || 25) / (WORK / 60);
                     addXP(Math.max(1, Math.floor(elapsedMinutes * rate)));
+                    shMirrorFocusToActivity(elapsedMinutes);
+                    try { window._shTrackDirty = true; } catch (e) {}
                     showToast(`Partial session saved: ${elapsedMinutes}m counted ✅`, 'success');
                     paintFocusBase();
+                    shRefreshTrack(container);
                 }
             }
         }
@@ -1610,6 +1671,17 @@ async function loadTrackProgress(container, ctx) {
         }
     } catch (e) {}
     var totalPct = homeworkTotal ? Math.round(homeworkDone / homeworkTotal * 100) : 0;
+    // Focus time (localStorage source of truth) summarized over the last 7 days
+    // so the glance stays functional even when there is no homework yet.
+    var focusWeekMinutes = 0, focusWeekSessions = 0;
+    try {
+        var weekKeys = {};
+        for (var wi = 6; wi >= 0; wi--) { var wdt = new Date(); wdt.setDate(wdt.getDate() - wi); weekKeys[shTodayStr(wdt)] = true; }
+        var fh = (typeof getData === 'function' ? getData().focusHistory : []) || [];
+        fh.forEach(function (h) {
+            if (h && h.date && weekKeys[h.date]) { focusWeekMinutes += (Number(h.duration) || 0); focusWeekSessions++; }
+        });
+    } catch (e) {}
     if (host) {
         host.innerHTML = `
             <div class="grid-cols-2">
@@ -1637,27 +1709,73 @@ async function loadTrackProgress(container, ctx) {
                         </div>`;
                     }).join('') : `<div style="font-size:13px;color:var(--text-dim);">No homework yet.</div>`}
                 </div>
+            </div>
+            <div style="margin-top:12px;background:rgba(124,92,252,0.08);border:1px solid rgba(124,92,252,0.2);border-radius:12px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div style="font-size:13px;font-weight:600;">🎯 Focus this week: ${focusWeekMinutes}m across ${focusWeekSessions} session${focusWeekSessions === 1 ? '' : 's'}</div>
+                <div style="font-size:11px;color:var(--text-dim);">Includes Pomodoro time from Today — stays in sync automatically.</div>
             </div>`;
     }
-    // Weekly stats from the shared context's recent activity (no extra query)
+    // Weekly stats: shared context's recent activity + local focus history.
+    // Focus sessions previously never reached here (localStorage only), which
+    // is why focus-only users always saw 0m.
     if (statsHost) {
         var byDay = {};
         for (var i = 6; i >= 0; i--) {
             var dt = new Date(); dt.setDate(dt.getDate() - i);
-            byDay[dt.toISOString().split('T')[0]] = 0;
+            byDay[shTodayStr(dt)] = 0;
         }
         (ctx.recentActivity || []).forEach(function (a) {
             var v = a.completedAt;
             var day = null;
             try {
-                if (v && v.toDate) day = v.toDate().toISOString().split('T')[0];
+                if (v && typeof v.toDate === 'function') day = shTodayStr(v.toDate());
+                else if (v instanceof Date) day = shTodayStr(v);
+                else if (v && typeof v.seconds === 'number') day = shTodayStr(new Date(v.seconds * 1000));
                 else if (typeof v === 'string' && v.length >= 10) day = v.slice(0, 10);
             } catch (e) {}
-            if (day && byDay[day] !== undefined) byDay[day] += (a.durationMinutes || 0);
+            if (day && byDay[day] !== undefined) byDay[day] += (Number(a.durationMinutes) || 0);
         });
+        // Merge local focus sessions with count-based dedupe: if N local
+        // sessions of X minutes exist on a day and M mirrored focus docs of
+        // the same duration are already in recentActivity, only the
+        // (N - M) unsynced remainder is added. Existence-check (.some) would
+        // undercount repeated identical sessions (e.g. two 25m Pomodoros).
+        try {
+            var localFocus = (typeof getData === 'function' ? getData().focusHistory : []) || [];
+            var localCounts = {}, mirroredCounts = {};
+            localFocus.forEach(function (h) {
+                if (!h || !h.date || byDay[h.date] === undefined) return;
+                var mins = Number(h.duration) || 0;
+                if (!(mins > 0)) return;
+                var k = h.date + '|' + mins;
+                localCounts[k] = (localCounts[k] || 0) + 1;
+            });
+            (ctx.recentActivity || []).forEach(function (a) {
+                if (!a || a.type !== 'focus') return;
+                var mins = Number(a.durationMinutes) || 0;
+                if (!(mins > 0)) return;
+                var av = a.completedAt, aday = null;
+                try {
+                    if (av && typeof av.toDate === 'function') aday = shTodayStr(av.toDate());
+                    else if (av instanceof Date) aday = shTodayStr(av);
+                    else if (av && typeof av.seconds === 'number') aday = shTodayStr(new Date(av.seconds * 1000));
+                    else if (typeof av === 'string' && av.length >= 10) aday = av.slice(0, 10);
+                } catch (e) {}
+                if (!aday || byDay[aday] === undefined) return;
+                var k2 = aday + '|' + mins;
+                mirroredCounts[k2] = (mirroredCounts[k2] || 0) + 1;
+            });
+            Object.keys(localCounts).forEach(function (k) {
+                var parts = k.split('|');
+                var day = parts[0], mins = Number(parts[1]) || 0;
+                var unsynced = (localCounts[k] || 0) - (mirroredCounts[k] || 0);
+                if (unsynced > 0 && byDay[day] !== undefined) byDay[day] += unsynced * mins;
+            });
+        } catch (e) {}
         var totalMin = Object.values(byDay).reduce(function (a, b) { return a + b; }, 0);
+        var focusTotalMin = focusWeekMinutes, focusTotalSessions = focusWeekSessions;
         statsHost.innerHTML = '<div style="font-size:28px;font-weight:700;font-family:\'Sora\',sans-serif;color:#C4B5FD;">' + totalMin + 'm</div>' +
-            '<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Active minutes, last 7 days</div>' +
+            '<div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Active minutes, last 7 days (includes ' + focusTotalMin + 'm focus across ' + focusTotalSessions + ' sessions)</div>' +
             '<div style="font-size:12px;color:var(--text-dim);">' + (ctx.quizHistory || []).length + ' recent quizzes · ' + (ctx.weakSubjects || []).length + ' weak subject(s)</div>';
     }
 }
@@ -1665,19 +1783,62 @@ async function loadTrackProgress(container, ctx) {
 function initTrackCharts(container) {
     function initCharts() {
         if (typeof Chart === 'undefined') { setTimeout(initCharts, 500); return; }
-        // Charts render statically.
+        // Charts merge manual study logs with Pomodoro focus history.
+        // studyLogs is never written in Stuvo (always []), so without this
+        // merge focus-only users always saw empty charts.
         const d = getData();
         const logs = d.studyLogs || [];
-        const labels = logs.map(l => { const dt = new Date(l.date); return dt.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }); });
+        const focusHistory = d.focusHistory || [];
+        var focusByDate = {};
+        focusHistory.forEach(function (h) {
+            if (!h || !h.date) return;
+            var mins = Number(h.duration) || 0;
+            if (!(mins > 0)) return;
+            focusByDate[h.date] = (focusByDate[h.date] || 0) + mins;
+        });
+        var logHoursByDate = {};
+        var logTotals = {};
+        logs.forEach(function (l) {
+            if (!l || !l.date) return;
+            var hrs = Number(l.hours) || 0;
+            if (!(hrs > 0)) return;
+            logHoursByDate[l.date] = (logHoursByDate[l.date] || 0) + hrs;
+            var subj = l.subject || 'General';
+            logTotals[subj] = (logTotals[subj] || 0) + hrs;
+        });
+        var allDates = {};
+        Object.keys(logHoursByDate).forEach(function (k) { allDates[k] = true; });
+        Object.keys(focusByDate).forEach(function (k) { allDates[k] = true; });
+        var sortedDates = Object.keys(allDates).sort();
+        // Fall back to raw log order when neither source aggregates (legacy).
+        var useUnion = sortedDates.length > 0;
+        var labels, studyData, focusData;
+        if (useUnion) {
+            labels = sortedDates.map(function (ds) { var dt = new Date(ds + 'T12:00:00'); return dt.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }); });
+            studyData = sortedDates.map(function (ds) { return Math.round((logHoursByDate[ds] || 0) * 100) / 100; });
+            focusData = sortedDates.map(function (ds) { return Math.round(((focusByDate[ds] || 0) / 60) * 100) / 100; });
+        } else {
+            labels = logs.map(l => { const dt = new Date(l.date); return dt.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }); });
+            studyData = logs.map(l => l.hours);
+            focusData = logs.map(() => 0);
+        }
+        var hasFocus = focusData.some(function (v) { return v > 0; });
         const lineEl = container.querySelector('#line-chart');
         const pieEl = container.querySelector('#pie-chart');
-        if (lineEl && !lineEl.dataset.done) {
-            lineEl.dataset.done = '1';
-            new Chart(lineEl, { type: 'line', data: { labels, datasets: [{ label: 'Hours', data: logs.map(l => l.hours), borderColor: '#7C5CFC', backgroundColor: 'rgba(124,92,252,0.15)', fill: true, tension: 0.4 }] }, options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#9AA3C4' }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { ticks: { color: '#9AA3C4' }, grid: { color: 'rgba(255,255,255,0.05)' } } } } });
+        if (lineEl) {
+            try { var prevLine = (typeof Chart !== 'undefined' && typeof Chart.getChart === 'function') ? Chart.getChart(lineEl) : null; if (prevLine) prevLine.destroy(); } catch (e) {}
+            try { delete lineEl.dataset.done; } catch (e) {}
+            var datasets = [{ label: 'Hours', data: studyData, borderColor: '#7C5CFC', backgroundColor: 'rgba(124,92,252,0.15)', fill: true, tension: 0.4 }];
+            if (hasFocus) datasets.push({ label: 'Focus (h)', data: focusData, borderColor: '#10B981', backgroundColor: 'rgba(16,185,129,0.12)', fill: true, tension: 0.4 });
+            new Chart(lineEl, { type: 'line', data: { labels, datasets: datasets }, options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { display: hasFocus } }, scales: { x: { ticks: { color: '#9AA3C4' }, grid: { color: 'rgba(255,255,255,0.05)' } }, y: { ticks: { color: '#9AA3C4' }, grid: { color: 'rgba(255,255,255,0.05)' } } } } });
         }
-        if (pieEl && !pieEl.dataset.done) {
-            pieEl.dataset.done = '1';
-            const totals = {}; logs.forEach(l => { totals[l.subject] = (totals[l.subject] || 0) + l.hours; });
+        if (pieEl) {
+            try { var prevPie = (typeof Chart !== 'undefined' && typeof Chart.getChart === 'function') ? Chart.getChart(pieEl) : null; if (prevPie) prevPie.destroy(); } catch (e) {}
+            try { delete pieEl.dataset.done; } catch (e) {}
+            const totals = Object.assign({}, logTotals);
+            var focusTotalHours = Object.values(focusByDate).reduce(function (a, b) { return a + b; }, 0) / 60;
+            focusTotalHours = Math.round(focusTotalHours * 100) / 100;
+            if (focusTotalHours > 0) totals['Focus'] = Math.round(((totals['Focus'] || 0) + focusTotalHours) * 100) / 100;
             new Chart(pieEl, { type: 'pie', data: { labels: Object.keys(totals), datasets: [{ data: Object.values(totals), backgroundColor: ['#7C5CFC', '#4F8CFF', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'] }] }, options: { responsive: true, maintainAspectRatio: false, animation: false, plugins: { legend: { labels: { color: '#9AA3C4', font: { size: 11 } } } } } });
         }
     }
@@ -1688,6 +1849,21 @@ function initTrackCharts(container) {
         s.onload = initCharts;
         document.head.appendChild(s);
     } else { initCharts(); }
+}
+
+// Rebuild Track charts from current localStorage (called after focus saves
+// and when returning to the Track tab). Safe to call repeatedly: existing
+// Chart instances are destroyed first, so no leak or double-draw.
+function refreshTrackCharts(container) {
+    try {
+        if (typeof Chart === 'undefined') return;
+        var lineEl = container ? container.querySelector('#line-chart') : null;
+        var pieEl = container ? container.querySelector('#pie-chart') : null;
+        if (!lineEl && !pieEl) return;
+        // Reuse the same merge logic by delegating to initTrackCharts, which
+        // now destroys previous instances before recreating.
+        initTrackCharts(container);
+    } catch (e) {}
 }
 
 // ══════════════════════════════════════════════════════════════
