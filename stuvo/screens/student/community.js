@@ -199,6 +199,19 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                 }
             });
         });
+
+        // Accessibility: mic input on post box + comment inputs (shared STT utility)
+        try {
+            if (typeof attachSTT === 'function') {
+                const postInput = container.querySelector('#post-text');
+                if (postInput) attachSTT(postInput);
+                container.querySelectorAll('.comment-form input').forEach(el => { try { attachSTT(el); } catch {} });
+            } else if (typeof window.attachSTT === 'function') {
+                const postInput = container.querySelector('#post-text');
+                if (postInput) window.attachSTT(postInput);
+                container.querySelectorAll('.comment-form input').forEach(el => { try { window.attachSTT(el); } catch {} });
+            }
+        } catch {}
     }
 
     load();

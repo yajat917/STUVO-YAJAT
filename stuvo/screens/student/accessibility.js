@@ -435,68 +435,65 @@ async function saveAccessibilityPrefs(uid, prefs) {
   }
 }
 
-// ─── TTS with word highlighting ─────────────────────────────────
-let _currentUtterance = null;
+// ─── TTS — single shared native implementation ────────────────────
+let currentUtterance = null;
 let _ttsHighlightCleanup = null;
 let _ttsContainer = null;
-let _ttsWords = [];
 let _ttsBtn = null;
 
-function speakText(text, btnEl) {
-  // Enhanced TTS that also highlights if wordHighlighting enabled
-  if (!('speechSynthesis' in window)) { showToast(_i18n_t('accessibility.ttsNotSupported','Text-to-speech not supported'), 'error'); return; }
+function _ttsLang() {
+  try { return stuvoBcp47(window.currentUserLanguage || document.documentElement.lang || 'en'); } catch { return 'en'; }
+}
+
+function speak(text, { lang = _ttsLang(), onWordBoundary = null, onEnd = null } = {}) {
+  if (!('speechSynthesis' in window)) return false;
   try { window.speechSynthesis.cancel(); } catch {}
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = lang;
+  if (onWordBoundary) utterance.onboundary = (event) => { if (event.name === 'word') onWordBoundary(event.charIndex, event.charIndex + (event.charLength || 0)); };
+  if (onEnd) { utterance.onend = onEnd; utterance.onerror = onEnd; }
+  currentUtterance = utterance;
+  window.speechSynthesis.speak(utterance);
+  return true;
+}
+
+function pauseSpeech() { try { if (window.speechSynthesis.speaking) window.speechSynthesis.pause(); } catch {} }
+function resumeSpeech() { try { if (window.speechSynthesis.paused) window.speechSynthesis.resume(); } catch {} }
+function stopSpeech() {
+  try { window.speechSynthesis.cancel(); } catch {}
+  currentUtterance = null;
   if (_ttsHighlightCleanup) { try { _ttsHighlightCleanup(); } catch {} _ttsHighlightCleanup = null; }
+  if (_ttsBtn) { _ttsBtn.classList.remove('speaking'); _ttsBtn.innerHTML = '🔊 Listen'; _ttsBtn = null; }
+  document.querySelectorAll('.tts-controls').forEach(el => el.remove());
+  document.querySelectorAll('.tts-highlight-word').forEach(el => el.classList.remove('tts-highlight-word'));
+}
+// Critical correctness rule: cancel any in-progress speech on route change,
+// so navigating away doesn't leave a voice talking over the new screen
+if (typeof window !== 'undefined' && !window._stuvoSpeechCleanupBound) {
+  window._stuvoSpeechCleanupBound = true;
+  window.addEventListener('hashchange', stopSpeech);
+}
+// Legacy alias (callers + window export use stopSpeaking)
+function stopSpeaking() { stopSpeech(); }
+
+function speakText(text, btnEl) {
+  if (!('speechSynthesis' in window)) { showToast(_i18n_t('accessibility.ttsNotSupported','Text-to-speech not supported'), 'error'); return; }
   if (!text || !text.trim()) { showToast(_i18n_t('accessibility.noTextToRead','No text to read'), 'info'); return; }
+  stopSpeech();
   const prefs = window._accessPrefsCache || ACCESSIBILITY_DEFAULTS;
-  const useHighlight = prefs.wordHighlighting !== false;
-  // If no highlight or no container, fallback to simple speak
-  if (!useHighlight) {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 0.95; utter.pitch = 1;
-    try {
-      const curLang = (window.currentUserLanguage || 'en').toLowerCase();
-      utter.lang = stuvoBcp47(curLang);
-      const voices = window.speechSynthesis.getVoices();
-      const preferred = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(curLang))
-        || voices.find(v => v.lang && v.lang.toLowerCase().startsWith('en'));
-      if (preferred) utter.voice = preferred;
-    } catch {}
-    if (btnEl) btnEl.classList.add('speaking');
-    utter.onend = () => { if (btnEl) { btnEl.classList.remove('speaking'); btnEl.innerHTML = '🔊 Listen'; } };
-    utter.onerror = () => { if (btnEl) btnEl.classList.remove('speaking'); };
-    window.speechSynthesis.speak(utter);
-    return;
-  }
-  // Highlighting mode: need container — try to find nearest readable container or create temporary spans
-  // For generic speakText without container, just speak without highlight
-  speakWithHighlight(text, null, btnEl);
+  if (prefs.wordHighlighting !== false) { speakWithHighlight(text, null, btnEl); return; }
+  if (btnEl) btnEl.classList.add('speaking');
+  speak(text, { onEnd: () => { if (btnEl) { btnEl.classList.remove('speaking'); btnEl.innerHTML = '🔊 Listen'; } } });
 }
 
 function speakWithHighlight(text, containerEl, btnEl) {
   if (!('speechSynthesis' in window)) { showToast(_i18n_t('accessibility.ttsNotSupported','Text-to-speech not supported'), 'error'); return; }
-  try { window.speechSynthesis.cancel(); } catch {}
-  if (_ttsHighlightCleanup) { try { _ttsHighlightCleanup(); } catch {} }
   if (!text || !text.trim()) { showToast(_i18n_t('accessibility.noTextToRead','No text to read'), 'info'); return; }
-  // Prepare container for highlighting if provided else create ephemeral highlight in overlay
-  let highlightParent = null;
+  stopSpeech();
   let wordSpans = [];
-  let sentenceSpans = [];
-  let useWordLevel = true;
-
   if (containerEl && containerEl.nodeType === 1) {
-    highlightParent = containerEl;
-    // Wrap words in spans for highlighting
     const originalHTML = containerEl.innerHTML;
     const words = text.split(/\s+/).filter(Boolean);
-    // For sentence fallback, split by .!? and wrap sentences
-    const sentences = text.split(/(?<=[.!?])\s+/);
-    // Try word-level: wrap each word in span with data-tts-word
-    // Keep original text but rebuild with spans for highlighting sync
-    // Save original for cleanup
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = '';
-    // Build word spans
     const frag = document.createDocumentFragment();
     words.forEach((w, i) => {
       const span = document.createElement('span');
@@ -505,61 +502,23 @@ function speakWithHighlight(text, containerEl, btnEl) {
       span.style.borderRadius = '4px';
       span.style.padding = '1px 2px';
       frag.appendChild(span);
-      wordSpans.push(span.span || span);
-      // store reference
       wordSpans[i] = span;
     });
-    // For highlighting we need spans attached — replace container content with word spans plus controls?
-    // Instead to avoid destroying container, create overlay highlight layer that we update via JS highlighting words sequentially
-    // Simpler: keep container as is, highlight by wrapping words temporarily and updating on boundary
-    // Approach: Store original, replace with word spans for duration
     _ttsContainer = containerEl;
     _ttsContainer.dataset.ttsOriginal = originalHTML;
     containerEl.innerHTML = '';
     wordSpans.forEach(s => containerEl.appendChild(s));
-    // Sentence spans for fallback: group words into sentences
-    let idx = 0;
-    sentences.forEach(sent => {
-      const sentSpan = document.createElement('span');
-      sentSpan.dataset.ttsSentence = '1';
-      const count = sent.split(/\s+/).filter(Boolean).length;
-      for (let j=0;j<count;j++) {
-        if (wordSpans[idx]) {
-          sentSpan.appendChild(wordSpans[idx]);
-          idx++;
-        }
-      }
-      sentenceSpans.push(sentSpan);
-    });
-
     _ttsHighlightCleanup = () => {
       if (_ttsContainer && _ttsContainer.dataset.ttsOriginal !== undefined) {
         _ttsContainer.innerHTML = _ttsContainer.dataset.ttsOriginal;
         delete _ttsContainer.dataset.ttsOriginal;
       }
       _ttsContainer = null;
-      _ttsWords = [];
       wordSpans = [];
     };
   }
-
-  const utter = new SpeechSynthesisUtterance(text);
-  utter.rate = 0.95; utter.pitch = 1;
-  try {
-    const voices = window.speechSynthesis.getVoices();
-    const curLang = (window.currentUserLanguage || 'en').toLowerCase();
-    utter.lang = stuvoBcp47(curLang);
-    let preferred = voices.find(v => v.lang && v.lang.toLowerCase().startsWith(curLang));
-    if (!preferred) preferred = voices.find(v => v.lang && v.lang.toLowerCase().startsWith('en'));
-    if (preferred) utter.voice = preferred;
-  } catch {}
-  _currentUtterance = utter;
-  _ttsBtn = btnEl;
-  if (btnEl) {
-    btnEl.classList.add('speaking');
-    btnEl.innerHTML = '⏹ Stop';
-  }
-  // Controls: add pause/resume if container exists
+  _ttsBtn = btnEl || null;
+  if (btnEl) { btnEl.classList.add('speaking'); btnEl.innerHTML = '⏹ Stop'; }
   let controls = null;
   if (containerEl && !containerEl.querySelector('.tts-controls')) {
     controls = document.createElement('div');
@@ -567,92 +526,31 @@ function speakWithHighlight(text, containerEl, btnEl) {
     controls.innerHTML = `<button type="button" data-tts="pause" title="Pause">⏸</button><button type="button" data-tts="stop" title="Stop">⏹</button>`;
     containerEl.insertAdjacentElement('afterend', controls);
     controls.querySelector('[data-tts="pause"]').addEventListener('click', () => {
-      if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-        window.speechSynthesis.pause();
-        controls.querySelector('[data-tts="pause"]').textContent = '▶';
-      } else if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-        controls.querySelector('[data-tts="pause"]').textContent = '⏸';
-      }
+      if (window.speechSynthesis.paused) { resumeSpeech(); controls.querySelector('[data-tts="pause"]').textContent = '⏸'; }
+      else { pauseSpeech(); controls.querySelector('[data-tts="pause"]').textContent = '▶'; }
     });
-    controls.querySelector('[data-tts="stop"]').addEventListener('click', () => {
-      try { window.speechSynthesis.cancel(); } catch {}
-    });
+    controls.querySelector('[data-tts="stop"]').addEventListener('click', () => stopSpeech());
   }
-
   let lastWordIdx = -1;
-  let boundarySupported = true;
-  let fallbackTimer = null;
-
-  utter.onboundary = (e) => {
-    // e.name === 'word' or 'sentence' depending on engine; e.charIndex gives position
-    try {
-      if (e.name === 'word' || e.charIndex !== undefined) {
-        // Estimate word index by char position
-        const charIdx = e.charIndex || 0;
-        const textUpTo = text.slice(0, charIdx);
-        const wordIdx = textUpTo.split(/\s+/).filter(Boolean).length;
-        if (wordSpans[wordIdx]) {
-          if (lastWordIdx >=0 && wordSpans[lastWordIdx]) wordSpans[lastWordIdx].classList.remove('tts-highlight-word');
-          wordSpans[wordIdx].classList.add('tts-highlight-word');
-          // Auto-scroll into view
-          try { wordSpans[wordIdx].scrollIntoView({ block:'center' }); } catch {}
-          lastWordIdx = wordIdx;
-        }
-      }
-    } catch (err) {}
-  };
-
-  // Fallback timer if onboundary not fired (some browsers)
-  let wordDuration = Math.max(300, 600 - text.length * 0.1); // estimate
-  if (boundarySupported) {
-    // Test if boundary fires within 1s, else fallback to interval
-    setTimeout(() => {
-      if (lastWordIdx === -1 && wordSpans.length) {
-        // No boundary support, fallback to timed highlighting
-        boundarySupported = false;
-        let idx = 0;
-        fallbackTimer = setInterval(() => {
-          if (idx > 0 && wordSpans[idx-1]) wordSpans[idx-1].classList.remove('tts-highlight-word');
-          if (wordSpans[idx]) {
-            wordSpans[idx].classList.add('tts-highlight-word');
-            try { wordSpans[idx].scrollIntoView({ block:'center' }); } catch {}
-          }
-          idx++;
-          if (idx >= wordSpans.length) clearInterval(fallbackTimer);
-        }, 450);
-      }
-    }, 900);
-  }
-
-  utter.onend = () => {
-    if (fallbackTimer) clearInterval(fallbackTimer);
-    if (lastWordIdx >=0 && wordSpans[lastWordIdx]) wordSpans[lastWordIdx].classList.remove('tts-highlight-word');
+  const cleanup = () => {
+    if (lastWordIdx >= 0 && wordSpans[lastWordIdx]) wordSpans[lastWordIdx].classList.remove('tts-highlight-word');
     if (btnEl) { btnEl.classList.remove('speaking'); btnEl.innerHTML = '🔊 Listen'; }
     if (_ttsHighlightCleanup) { try { _ttsHighlightCleanup(); } catch {} _ttsHighlightCleanup = null; }
     if (controls) controls.remove();
-    _currentUtterance = null;
+    currentUtterance = null;
     _ttsBtn = null;
-    // Also remove sentence highlight fallback
-    sentenceSpans.forEach(s => s.classList.remove('tts-highlight-sentence'));
   };
-  utter.onerror = () => {
-    if (fallbackTimer) clearInterval(fallbackTimer);
-    if (btnEl) { btnEl.classList.remove('speaking'); btnEl.innerHTML = '🔊 Listen'; }
-    if (_ttsHighlightCleanup) { try { _ttsHighlightCleanup(); } catch {} _ttsHighlightCleanup = null; }
-    if (controls) controls.remove();
-    _currentUtterance = null;
-  };
-  window.speechSynthesis.speak(utter);
-}
-function stopSpeaking() {
-  try { window.speechSynthesis.cancel(); } catch {}
-  if (_ttsHighlightCleanup) { try { _ttsHighlightCleanup(); } catch {} _ttsHighlightCleanup = null; }
-  if (_ttsBtn) { _ttsBtn.classList.remove('speaking'); _ttsBtn.innerHTML = '🔊 Listen'; _ttsBtn = null; }
-  // Remove any lingering controls
-  document.querySelectorAll('.tts-controls').forEach(el => el.remove());
-  document.querySelectorAll('.tts-highlight-word').forEach(el => el.classList.remove('tts-highlight-word'));
-  document.querySelectorAll('.tts-highlight-sentence').forEach(el => el.classList.remove('tts-highlight-sentence'));
+  speak(text, {
+    onWordBoundary: wordSpans.length ? (start) => {
+      const wordIdx = text.slice(0, start).split(/\s+/).filter(Boolean).length;
+      if (wordSpans[wordIdx]) {
+        if (lastWordIdx >= 0 && wordSpans[lastWordIdx]) wordSpans[lastWordIdx].classList.remove('tts-highlight-word');
+        wordSpans[wordIdx].classList.add('tts-highlight-word');
+        lastWordIdx = wordIdx;
+      }
+    } : null,
+    onEnd: cleanup
+  });
 }
 
 // Attach TTS button after a description element — enhanced with highlight
@@ -664,15 +562,11 @@ function createTTSButtonForText(textGetter) {
   btn.title = 'Read aloud';
   btn.setAttribute('aria-label', 'Read aloud');
   btn.addEventListener('click', () => {
-    if (btn.classList.contains('speaking')) { stopSpeaking(); btn.classList.remove('speaking'); btn.innerHTML = '🔊 Listen'; return; }
+    if (btn.classList.contains('speaking')) { stopSpeech(); return; }
     const t = typeof textGetter === 'function' ? textGetter() : String(textGetter || '');
-    if (!t.trim()) { showToast('No text to read', 'info'); return; }
-    btn.innerHTML = '⏹ Stop';
-    // Try to find nearest container with that text for highlighting
+    if (!t.trim()) { showToast(_i18n_t('accessibility.noTextToRead','No text to read'), 'info'); return; }
     let container = null;
     try {
-      // If textGetter is closure over element, we can try to locate element containing text
-      // Fallback: search for element with that text substring
       const all = document.querySelectorAll('.glass-card p, .output-text, .hw-item, .post-text, [id*="tts"], .ai-answer-line');
       for (const el of all) {
         if (el.textContent && el.textContent.includes(t.slice(0,30))) { container = el; break; }
@@ -683,21 +577,8 @@ function createTTSButtonForText(textGetter) {
     } else {
       speakText(t, btn);
     }
-    const check = setInterval(() => {
-      if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) { btn.innerHTML = '🔊 Listen'; btn.classList.remove('speaking'); clearInterval(check); }
-    }, 500);
-    setTimeout(() => clearInterval(check), 60000);
   });
   return btn;
-}
-// Legacy alias
-function attachTTS(container, selector) {
-  const el = container.querySelector(selector);
-  if (!el || el.dataset.ttsAttached) return;
-  el.dataset.ttsAttached = '1';
-  const btn = createTTSButtonForText(() => el.textContent || '');
-  btn.style.marginTop = '8px';
-  el.insertAdjacentElement('afterend', btn);
 }
 
 // ─── Auto-read new content ──────────────────────────────────────
@@ -720,7 +601,36 @@ function maybeAutoRead(text, containerEl) {
   } catch (e) {}
 }
 
-// Speech-to-text using Web Speech API
+// Speech-to-text — single shared native implementation
+function startListening({ lang = _ttsLang(), onResult, onInterim = null, onError = null, onEnd = null } = {}) {
+  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognitionAPI) {
+    if (onError) onError('unsupported');
+    return null;
+  }
+  const recognition = new SpeechRecognitionAPI();
+  recognition.lang = lang;
+  recognition.continuous = false;
+  recognition.interimResults = !!onInterim;
+  recognition.onresult = (event) => {
+    const transcript = Array.from(event.results).map(r => r[0].transcript).join('');
+    const isFinal = event.results[event.results.length - 1].isFinal;
+    if (isFinal) onResult(transcript);
+    else if (onInterim) onInterim(transcript);
+  };
+  recognition.onerror = (event) => {
+    const genericMessages = {
+      'no-speech': _i18n_t('accessibility.sttNoSpeech', "Didn't catch that — try again."),
+      'not-allowed': _i18n_t('accessibility.micDenied', 'Microphone access is needed for this.'),
+      'network': _i18n_t('accessibility.sttNetwork', 'Connection issue — try again.'),
+    };
+    if (onError) onError(genericMessages[event.error] || _i18n_t('accessibility.sttFailed', 'Something went wrong — try again.'));
+  };
+  if (onEnd) recognition.onend = onEnd;
+  recognition.start();
+  return recognition;
+}
+
 function attachSTT(inputEl) {
   if (!inputEl || inputEl.dataset.sttAttached) return;
   inputEl.dataset.sttAttached = '1';
@@ -737,50 +647,40 @@ function attachSTT(inputEl) {
   micBtn.setAttribute('aria-label', 'Start voice input');
   wrapper.appendChild(micBtn);
 
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    micBtn.addEventListener('click', () => showToast("Speech input isn't supported", 'info'));
+  if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
+    micBtn.addEventListener('click', () => showToast(_i18n_t('accessibility.sttUnsupported', "Speech input isn't supported"), 'info'));
     micBtn.style.opacity = '0.5';
     return;
   }
   let recognition = null;
   let listening = false;
+  const resetBtn = () => { micBtn.classList.remove('listening'); micBtn.textContent = '🎤'; listening = false; };
   micBtn.addEventListener('click', () => {
-    if (listening) {
-      try { recognition.stop(); } catch {}
-      return;
-    }
+    if (listening) { try { recognition.stop(); } catch {} return; }
+    micBtn.classList.add('listening');
+    micBtn.textContent = '⏹';
+    listening = true;
     try {
-      recognition = new SpeechRecognition();
-      recognition.lang = stuvoBcp47(window.currentUserLanguage || 'en');
-      recognition.interimResults = false;
-      recognition.maxAlternatives = 1;
-      recognition.continuous = false;
-      micBtn.classList.add('listening');
-      micBtn.textContent = '⏹';
-      listening = true;
-      recognition.onresult = (e) => {
-        const transcript = e.results[0][0].transcript || '';
-        if (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') {
-          const start = inputEl.selectionStart || inputEl.value.length;
-          const end = inputEl.selectionEnd || inputEl.value.length;
-          inputEl.value = inputEl.value.slice(0, start) + (inputEl.value.slice(0, start) ? ' ' : '') + transcript + inputEl.value.slice(end);
-          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-          inputEl.focus();
-        }
-      };
-      recognition.onend = () => { micBtn.classList.remove('listening'); micBtn.textContent = '🎤'; listening = false; };
-      recognition.onerror = (e) => {
-        console.error('[STT]', e);
-        micBtn.classList.remove('listening'); micBtn.textContent = '🎤'; listening = false;
-        if (e.error === 'not-allowed') showToast(_i18n_t('accessibility.micDenied','Microphone permission denied'), 'error');
-        else showToast(_i18n_t('accessibility.sttFailed',"Speech input isn't supported or failed"), 'info');
-      };
-      recognition.start();
-    } catch (err) {
-      console.error('[STT start]', err);
-      micBtn.classList.remove('listening'); micBtn.textContent = '🎤'; listening = false;
-      showToast(_i18n_t('accessibility.sttFailed',"Speech input isn't supported"), 'info');
+      recognition = startListening({
+        onResult: (transcript) => {
+          if (inputEl.tagName === 'TEXTAREA' || inputEl.tagName === 'INPUT') {
+            const start = inputEl.selectionStart ?? inputEl.value.length;
+            const end = inputEl.selectionEnd ?? inputEl.value.length;
+            inputEl.value = inputEl.value.slice(0, start) + (inputEl.value.slice(0, start) ? ' ' : '') + transcript + inputEl.value.slice(end);
+            inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+            inputEl.focus();
+          }
+        },
+        onError: (msg) => {
+          resetBtn();
+          showToast(msg === 'unsupported' ? _i18n_t('accessibility.sttUnsupported', "Speech input isn't supported") : msg, 'info');
+        },
+        onEnd: resetBtn
+      });
+      if (!recognition) resetBtn();
+    } catch {
+      resetBtn();
+      showToast(_i18n_t('accessibility.sttFailed', 'Something went wrong — try again.'), 'info');
     }
   });
 }
@@ -1186,6 +1086,11 @@ const ACCESSIBILITY_PRESETS = {
     window.speakText = speakText;
     window.speakWithHighlight = speakWithHighlight;
     window.stopSpeaking = stopSpeaking;
+    window.speak = speak;
+    window.pauseSpeech = pauseSpeech;
+    window.resumeSpeech = resumeSpeech;
+    window.stopSpeech = stopSpeech;
+    window.startListening = startListening;
     window.createTTSButtonForText = createTTSButtonForText;
     window.attachSTT = attachSTT;
     window.enhanceInputsWithSTT = enhanceInputsWithSTT;
