@@ -40,10 +40,8 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
         }
     }
 
-    const presentCount = Object.values(records).filter(v => v === 'present').length;
-    const absentCount = Object.values(records).filter(v => v === 'absent').length;
-    const total = presentCount + absentCount;
-    const pct = total ? Math.round((presentCount / total) * 100) : 0;
+    const { pct, presentCount, absentCount, total } = tallyAttendancePct(uid,
+        Object.entries(records).map(([day, value]) => ({ day, value })));
 
     const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const daysInMonth = new Date(year, monthIdx + 1, 0).getDate();

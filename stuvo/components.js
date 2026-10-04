@@ -265,6 +265,22 @@ function formatTeacherTime(t) {
     const ampm = h >= 12 ? 'PM' : 'AM';
     return `${h > 12 ? h - 12 : h}:${String(m).padStart(2, '0')} ${ampm}`;
 }
+// ─── Shared attendance % (single source of truth) ────────────────────
+// Same formula as the Student Attendance screen: per-day values keyed by day
+// (present overrides absent when several classes mark the same day),
+// pct = round(present/total*100). Pure — callers only differ in how they fetch.
+function tallyAttendancePct(uid, dayEntries) {
+    const perDay = {};
+    for (const entry of dayEntries || []) {
+        if (!entry || !entry.value) continue;
+        if (!perDay[entry.day] || entry.value === 'present') perDay[entry.day] = entry.value;
+    }
+    const vals = Object.values(perDay);
+    const presentCount = vals.filter(v => v === 'present').length;
+    const absentCount = vals.filter(v => v === 'absent').length;
+    const total = presentCount + absentCount;
+    return { pct: total ? Math.round((presentCount / total) * 100) : 0, presentCount, absentCount, total };
+}
 function timeAgoShared(ts) {
     if (!ts) return 'recently';
     const d = ts.toDate ? ts.toDate() : new Date(ts);

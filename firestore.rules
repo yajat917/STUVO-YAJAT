@@ -100,7 +100,7 @@ service cloud.firestore {
 
       // ─── homework ─────────────────────────────────────────────
       match /homework/{homeworkId} {
-        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId));
+        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId) || isAdmin());
         allow create, update, delete: if isTeacherOfClass(classId);
 
         // submissions — students write only their own, teachers read all
@@ -113,7 +113,7 @@ service cloud.firestore {
 
       // ─── attendance (read-only for students) ─────────────────
       match /attendance/{dateString} {
-        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId));
+        allow read: if isAuth() && (isTeacherOfClass(classId) || isStudentInClass(classId) || isAdmin());
         allow create, update, delete: if isTeacherOfClass(classId);
       }
 

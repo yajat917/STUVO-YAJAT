@@ -502,6 +502,7 @@ onAuthStateChanged(auth, async (user) => {
                         username: '',
                         classIds: [],
                         createdAt: new Date(),
+                        lastActiveAt: serverTimestamp(),
                     }, { merge: true });
                 }
                 const data = snap.exists ? snap.data() : {};
@@ -529,6 +530,9 @@ onAuthStateChanged(auth, async (user) => {
                 appState.userData = null;
             }
         }
+        // Track last activity for Admin Platform Health (covers persisted-session
+        // restores that bypass the sign-in handler) — best-effort, never blocks.
+        try { updateDoc(doc(db, 'users', user.uid), { lastActiveAt: serverTimestamp() }).catch(()=>{}); } catch {}
         // Mobile nav globals — required for mobile bottom nav role-based rendering
         window.currentUserRole = appState.role;
         window.currentUserUid = user.uid;

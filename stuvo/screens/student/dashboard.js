@@ -329,16 +329,25 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                     const snap = await psCollectSnapshot();
                     await setDoc(doc(db, 'shareSnapshots', tokenId), snap, { merge: true });
                     showToast(_i18n_t('parentShare.updated','Snapshot updated.'));
-                } catch (err) { console.error('[parentShare update]', err); showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.')); }
+                } catch (err) {
+                    const code = err && err.code;
+                    if (code !== 'permission-denied' && code !== 'not-found') console.error('[parentShare update]', err);
+                    showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.'));
+                }
                 paintManage(tokenId);
             });
             body.querySelector('#ps-revoke').addEventListener('click', async () => {
                 try {
                     await updateDoc(doc(db, 'shareSnapshots', tokenId), { revoked: true });
-                    try { await setDoc(doc(db, 'users', studentUid), { shareSnapshotId: null }, { merge: true }); } catch (err) { console.error('[parentShare pointer]', err); }
+                    try { await setDoc(doc(db, 'users', studentUid), { shareSnapshotId: null }, { merge: true }); } catch (err) {
+                        if (err && err.code !== 'permission-denied') console.error('[parentShare pointer]', err);
+                    }
                     if (appState.userData) appState.userData.shareSnapshotId = null;
                     showToast(_i18n_t('parentShare.revokedMsg','Link revoked.'));
-                } catch (err) { console.error('[parentShare revoke]', err); showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.')); return; }
+                } catch (err) {
+                    if (err && err.code !== 'permission-denied' && err.code !== 'not-found') console.error('[parentShare revoke]', err);
+                    showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.')); return;
+                }
                 paintEmpty();
             });
         }
@@ -358,12 +367,14 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                     const tokenId = psToken();
                     const snap = await psCollectSnapshot();
                     await setDoc(doc(db, 'shareSnapshots', tokenId), snap);
-                    try { await setDoc(doc(db, 'users', studentUid), { shareSnapshotId: tokenId }, { merge: true }); } catch (err) { console.error('[parentShare pointer]', err); }
+                    try { await setDoc(doc(db, 'users', studentUid), { shareSnapshotId: tokenId }, { merge: true }); } catch (err) {
+                        if (err && err.code !== 'permission-denied') console.error('[parentShare pointer]', err);
+                    }
                     if (appState.userData) appState.userData.shareSnapshotId = tokenId;
                     showToast(_i18n_t('parentShare.generated','Share link generated.'));
                     paintManage(tokenId);
                 } catch (err) {
-                    console.error('[parentShare generate]', err);
+                    if (err && err.code !== 'permission-denied' && err.code !== 'not-found') console.error('[parentShare generate]', err);
                     showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.'));
                     paintEmpty();
                 }

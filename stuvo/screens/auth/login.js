@@ -21,6 +21,7 @@ async function ensureSeedAdmin(user) {
         username: generateUsername(user.displayName),
         classIds: [],
         createdAt: new Date(),
+        lastActiveAt: serverTimestamp(),
     }, { merge: true });
 }
 
@@ -162,6 +163,8 @@ function renderLogin(container) {
                     window.currentUserRole = null;
                     window.currentUserUid = null;
                 } else {
+                    // Track last sign-in for Admin Platform Health — never blocks navigation
+                    try { setDoc(userRef, { lastActiveAt: serverTimestamp() }, { merge: true }).catch(()=>{}); } catch {}
                     // First-time language prompt if no preference set
                     if (!data.languagePreference && typeof showFirstTimeLanguagePrompt === 'function') {
                         setTimeout(()=>{ try{ showFirstTimeLanguagePrompt(); }catch{} }, 600);
@@ -182,6 +185,7 @@ function renderLogin(container) {
                     username,
                     classIds: [],
                     createdAt: new Date(),
+                    lastActiveAt: new Date(),
                 };
                 await setDoc(userRef, newUser);
 

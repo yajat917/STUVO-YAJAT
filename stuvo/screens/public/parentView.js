@@ -73,7 +73,12 @@ async function renderParentView(container, token) {
     try {
         const snap = await getDoc(doc(db, 'shareSnapshots', token));
         if (snap.exists) data = snap.data();
-    } catch (err) { console.error('[parentView load]', err); }
+    } catch (err) {
+        // Expected states (unknown token, revoked link, rules deny) stay silent:
+        // the view below already reports "no longer available". Log only bugs.
+        const code = err && err.code;
+        if (code !== 'permission-denied' && code !== 'not-found') console.error('[parentView load]', err);
+    }
     if (!data || data.revoked === true || !data.studentUid) { unavailable(); return; }
 
     const deadlines = Array.isArray(data.upcomingDeadlines) ? data.upcomingDeadlines.slice(0, 5) : [];

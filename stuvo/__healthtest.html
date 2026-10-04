@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>healthtest</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="router-outlet"></div>
+<pre id="out">PENDING</pre>
+<script src="components.js"></script>
+<script src="screens/admin/dashboard.js"></script>
+<script>
+// ---- Firestore mock (mirrors the node fixtures, incl. healthy-variant run) ----
+var DAY = 86400000, nowMs = Date.now();
+var now = new Date();
+var mp = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+function TS(daysAgo) { return { toDate: function() { return new Date(nowMs - daysAgo * DAY); } }; }
+function doc(id, data) { return { id: id, data: function() { return data; } }; }
+function snap(docs) { return { docs: docs, empty: docs.length === 0, size: docs.length, forEach: function(cb) { docs.forEach(cb); } }; }
+
+var USERS_QUIET = [
+  doc('t1', { role: 'teacher', status: 'active', officialName: 'Active Teacher', lastActiveAt: TS(2) }),
+  doc('t2', { role: 'teacher', status: 'active', officialName: 'Stale Teacher', lastActiveAt: TS(30) }),
+  doc('t3', { role: 'teacher', status: 'active', officialName: 'Ghost Teacher' }),
+  doc('s1', { role: 'student', status: 'active', officialName: 'Low Attender', username: 'low.1' }),
+  doc('s2', { role: 'student', status: 'active', officialName: 'Good Attender', username: 'good.2' })
+];
+var USERS_HEALTHY = [
+  doc('t1', { role: 'teacher', status: 'active', officialName: 'Active Teacher', lastActiveAt: TS(1) }),
+  doc('s2', { role: 'student', status: 'active', officialName: 'Good Attender', username: 'good.2' })
+];
+var CLASSES = [doc('c1', { name: 'Maths' }), doc('c2', { name: 'Science' })];
+var FIX = {};
+function installFixtures(users, hwC1DaysAgo, hwC2DaysAgo, attDocs) {
+  FIX['users'] = snap(users);
+  FIX['classes'] = snap(CLASSES);
+  FIX['classes/c1/homework'] = snap(hwC1DaysAgo === null ? [] : [doc('h1', { createdAt: TS(hwC1DaysAgo) })]);
+  FIX['classes/c2/homework'] = snap(hwC2DaysAgo === null ? [] : [doc('h2', { createdAt: TS(hwC2DaysAgo) })]);
+  FIX['classes/c1/attendance'] = snap(attDocs);
+  FIX['classes/c2/attendance'] = snap([]);
+}
+var db = {};
+collection = function(d) { return { __path: Array.prototype.slice.call(arguments, 1).join('/') }; };
+query = function(ref) { return ref; };
+orderBy = function() { return function(q) { return q; }; };
+limit = function() { return function(q) { return q; }; };
+where = function() { return function(q) { return q; }; };
+getDocs = async function(ref) {
+  var docs = (FIX[ref.__path] || snap([])).docs.slice();
+  if (ref.__path.indexOf('/homework') !== -1) {
+    docs.sort(function(a, b) {
+      var ta = a.data().createdAt, tb = b.data().createdAt;
+      var ma = (ta && ta.toDate) ? ta.toDate().getTime() : -1;
+      var mb = (tb && tb.toDate) ? tb.toDate().getTime() : -1;
+      return mb - ma;
+    });
+    docs = docs.slice(0, 1);
+  }
+  return snap(docs);
+};
+// Minimal t(): English defaults mirroring stuvo/lang/en.json additions
+var EN = null;
+async function t(k, p) {
+  if (!EN) { try { EN = await (await fetch('lang/en.json')).json(); } catch (e) { EN = {}; } }
+  var parts = k.split('.'), o = EN;
+  for (var i = 0; i < parts.length; i++) { o = (o && o[parts[i]] !== undefined) ? o[parts[i]] : undefined; }
+  var text = (o !== undefined) ? o : (typeof p === 'string' ? p : k);
+  if (p && typeof p === 'object') Object.keys(p).forEach(function(kk) { text = text.split('{' + kk + '}').join(p[kk]); });
+  return text;
+}
+
+(async function run() {
+  var results = {};
+  try {
+    // Run 1: data with real concerns
+    installFixtures(USERS_QUIET, 5, 20, [
+      doc(mp + '-03', { records: { s1: 'present', s2: 'present' } }),
+      doc(mp + '-04', { records: { s1: 'absent', s2: 'present' } }),
+      doc(mp + '-05', { records: { s1: 'absent', s2: 'present' } })
+    ]);
+    var c1 = document.createElement('div');
+    await renderAdminDashboard(c1);
+    var html1 = c1.innerHTML;
+    results.run1 = {
+      hasOverview: html1.indexOf('Platform Overview') !== -1,
+      hasHealthCard: html1.indexOf('Platform Health') !== -1,
+      quietRow: /(\d+) classes quiet 14\+ days/.exec(html1),
+      teacherRow: /(\d+) teachers inactive 14\+ days/.exec(html1),
+      attRow: /(\d+) students below 75% attendance/.exec(html1),
+      namesShown: ['Science', 'Stale Teacher', 'Ghost Teacher', 'Low Attender'].map(function(n) { return html1.indexOf(n) !== -1; }),
+      hasUsersLinks: (html1.match(/#/admin\/users/g) || []).length,
+      detailsCount: (html1.match(/<details/g) || []).length
+    };
+    // Run 2: healthy zero-state (fresh homework, active teacher, full attendance)
+    installFixtures(USERS_HEALTHY, 1, 2, [
+      doc(mp + '-03', { records: { s2: 'present' } }),
+      doc(mp + '-04', { records: { s2: 'present' } })
+    ]);
+    var c2 = document.createElement('div');
+    await renderAdminDashboard(c2);
+    var html2 = c2.innerHTML;
+    results.run2 = {
+      healthyShown: html2.indexOf('Everything looks healthy') !== -1,
+      noWarnings: html2.indexOf('⚠️') === -1,
+      detailsCount: (html2.match(/<details/g) || []).length
+    };
+    results.animations = document.getAnimations().length;
+    results.status = 'PASS';
+  } catch (e) {
+    results.status = 'ERROR: ' + (e && e.stack || e);
+  }
+  document.getElementById('out').textContent = JSON.stringify(results);
+})();
+</script>
+</body>
+</html>
