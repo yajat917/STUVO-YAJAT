@@ -220,5 +220,22 @@ service cloud.firestore {
     match /users/{userId}/timerPresets/{presetId} {
       allow read, write: if isAuth() && request.auth.uid == userId;
     }
+    // ─── Parent read-only share links (public, unguessable token) ───
+    // shareSnapshots/{token}: token IS the document ID, minted with
+    // crypto.randomUUID() (122 bits of entropy). Public get works with zero
+    // sign-in but only with the exact link; list is denied so tokens can
+    // never be enumerated. One stable link per student: the owner stores the
+    // token as users/{uid}.shareSnapshotId (self-writable under the existing
+    // users update rule) and overwrites the same document on "Update snapshot".
+    // Only the explicitly-approved summary fields below are ever written.
+    match /shareSnapshots/{token} {
+      allow get: if resource.data.revoked != true;
+      allow list: if false;
+      allow create: if isAuth() && isStudent()
+        && request.resource.data.studentUid == request.auth.uid
+        && request.resource.data.revoked == false;
+      allow update: if isAuth() && resource.data.studentUid == request.auth.uid;
+      allow delete: if isAuth() && resource.data.studentUid == request.auth.uid;
+    }
   }
 }

@@ -66,6 +66,7 @@ const roleHome = {
 const ROUTE_META = {
     '#/login':                 { title: 'Sign In: Stuvo',               desc: 'Sign in to Stuvo with Google to access your school dashboard.' },
     '#/pending':               { title: 'Pending Approval: Stuvo',      desc: 'Your teacher account is pending admin approval on Stuvo.' },
+    '#/parent-view':           { title: 'Progress Summary: Stuvo',      desc: 'View-only student progress summary shared by a Stuvo student. No sign-in required.' },
     '#/student/dashboard':     { title: 'Dashboard: Stuvo',             desc: 'Student dashboard: streak, focus plan, homework and practice at a glance.' },
     '#/student/attendance':    { title: 'Attendance: Stuvo',            desc: 'View your attendance calendar and monthly attendance stats.' },
     '#/student/homework':      { title: 'Homework: Stuvo',              desc: 'See assigned homework, submit answers and track quiz submissions.' },
@@ -142,6 +143,36 @@ const adminNav = [
 
 async function handleRoute() {
     const { path, params } = parseHash();
+
+    // ─── Public parent share view — zero sign-in, zero app chrome ───
+    // Prefix match (router is otherwise exact-match only): #/parent-view/{token}
+    if (path === '#/parent-view' || path.startsWith('#/parent-view/')) {
+        const raw = path.startsWith('#/parent-view/') ? path.slice('#/parent-view/'.length) : '';
+        let token = '';
+        try { token = decodeURIComponent((raw.split('?')[0].split('/')[0] || '').trim()); } catch { token = ''; }
+        const authContainer = document.getElementById('auth-container');
+        const appLayout = document.getElementById('app-layout');
+        updateDocumentHead('#/parent-view');
+        if (appLayout) appLayout.style.display = 'none';
+        try {
+            const bottomNav = document.getElementById('mobile-bottom-nav');
+            if (bottomNav) bottomNav.style.display = 'none';
+            const topHeader = document.getElementById('mobile-top-header');
+            if (topHeader) topHeader.style.display = 'none';
+            try { closeHamburger(); } catch {}
+            const appFooter = document.getElementById('app-footer');
+            if (appFooter) appFooter.style.display = 'none';
+        } catch {}
+        if (authContainer) {
+            authContainer.style.display = 'flex';
+            authContainer.innerHTML = '';
+            try {
+                if (typeof renderParentView === 'function') await renderParentView(authContainer, token);
+            } catch (err) { console.error('[parentView]', err); }
+            try { renderAuthFooter(authContainer); } catch {}
+        }
+        return;
+    }
 
     if (!appState.user && !authRoutes.has(path)) {
         window.location.hash = '#/login';

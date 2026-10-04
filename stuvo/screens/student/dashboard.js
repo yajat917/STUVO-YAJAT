@@ -176,6 +176,15 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                             { num: gradeLabel, label: _i18n_t('dashboard.avgGrade','Avg. Grade'), color: '#FDE68A' }
                         ])}
                     `, '', 0.15)}
+
+                    ${createGlassCard('👪 ' + _i18n_t('parentShare.title','Share with Parent'), `
+                        <div id="ps-body">
+                            ${createEmptyState(_i18n_t('parentShare.empty','Generate a link to share your progress with a parent — no login needed for them.'), '', '🔗')}
+                            <div style="text-align:center;margin-top:12px;">
+                                <button class="btn btn-sm" id="ps-generate">${_i18n_t('parentShare.generate','Generate share link')}</button>
+                            </div>
+                        </div>
+                    `, '', 0.18)}
                 </div>
 
                 <div class="flex-col">
@@ -220,6 +229,154 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
 
     // D.3 Quick Actions
     container.querySelectorAll('.quick-action-btn').forEach(btn => btn.addEventListener('click', () => window.location.hash = btn.dataset.route));
+
+    // ─── Parent read-only share link (one stable link per student) ───
+    // Reuses the attendance % already computed above + the same homework /
+    // testReports read pattern used elsewhere (no new collections, no new logic).
+    initParentShare(container, uid, classIds, attendancePct);
+
+    function psToken() {
+        try {
+            if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+        } catch {}
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+    }
+
+    function psLink(tokenId) {
+        return location.origin + location.pathname + '#/parent-view/' + tokenId;
+    }
+
+    function psFmtDue(deadline) {
+        try {
+            if (typeof formatDueDate === 'function') return formatDueDate(deadline);
+            if (typeof _i18n_t === 'function' && deadline) return deadline;
+        } catch {}
+        return deadline || '';
+    }
+
+    async function psCollectSnapshot() {
+        const pending = [];
+        const reports = [];
+        for (const classId of classIds) {
+            try {
+                const hwSnap = await getDocs(collection(db, 'classes', classId, 'homework'));
+                for (const d of hwSnap.docs) {
+                    const hw = d.data();
+                    let submitted = false;
+                    try {
+                        const subSnap = await getDoc(doc(db, 'classes', classId, 'homework', d.id, 'submissions', uid));
+                        if (subSnap.exists) submitted = true;
+                    } catch (err) { console.error('[parentShare sub]', err); }
+                    if (!submitted && hw.deadline) {
+                        pending.push({ title: hw.title || '', subject: hw.subject || '', deadline: hw.deadline });
+                    }
+                }
+            } catch (err) { console.error('[parentShare homework]', err); }
+            try {
+                const repSnap = await getDocs(query(collection(db, 'classes', classId, 'testReports'), where('studentId', '==', uid)));
+                repSnap.forEach(d => {
+                    const r = d.data();
+                    reports.push({ subject: r.subject || '', testName: r.testName || '', grade: r.grade || '', createdAt: r.createdAt });
+                });
+            } catch (err) { console.error('[parentShare testReports]', err); }
+        }
+        pending.sort((a, b) => (a.deadline || '9999').localeCompare(b.deadline || '9999'));
+        reports.sort((a, b) => ((b.createdAt && b.createdAt.toDate && b.createdAt.toDate()) || 0) - ((a.createdAt && a.createdAt.toDate && a.createdAt.toDate()) || 0));
+        return {
+            studentUid: uid,
+            studentName: appState.userData?.officialName || name || '',
+            attendancePercent: attendancePct,
+            upcomingDeadlines: pending.slice(0, 5).map(h => ({ title: h.title, subject: h.subject, dueDate: psFmtDue(h.deadline) })),
+            recentGrades: reports.slice(0, 5).map(r => ({ subject: r.subject, testName: r.testName, grade: r.grade })),
+            generatedAt: new Date(),
+            revoked: false
+        };
+    }
+
+    async function initParentShare(root, studentUid, studentClassIds, attPct) {
+        const body = root.querySelector('#ps-body');
+        if (!body || !studentUid) return;
+        const existingId = appState.userData?.shareSnapshotId || null;
+
+        async function paintManage(tokenId) {
+            const link = psLink(tokenId);
+            body.innerHTML = `
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <input id="ps-link" readonly value="${_escapeHtml(link)}" class="form-control" style="flex:1;min-width:0;" onclick="this.select()">
+                    <button class="btn btn-secondary btn-sm" id="ps-copy" style="white-space:nowrap;">${_i18n_t('parentShare.copy','Copy link')}</button>
+                </div>
+                <p style="font-size:12px;color:var(--text-dim);margin-top:8px;line-height:1.5;">${_i18n_t('parentShare.linkHint','Anyone with this link can view this summary. Revoke it anytime to disable the link.')}</p>
+                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                    <button class="btn btn-secondary btn-sm" id="ps-update">${_i18n_t('parentShare.update','Update snapshot')}</button>
+                    <button class="btn btn-secondary btn-sm" id="ps-revoke">${_i18n_t('parentShare.revoke','Revoke link')}</button>
+                </div>
+            `;
+            body.querySelector('#ps-copy').addEventListener('click', async () => {
+                try {
+                    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(link);
+                    else { const i = body.querySelector('#ps-link'); i.select(); document.execCommand('copy'); }
+                    showToast(_i18n_t('parentShare.copied','Link copied'));
+                } catch { showToast(_i18n_t('parentShare.copyFailed','Copy failed — long-press the link to copy it manually.')); }
+            });
+            body.querySelector('#ps-update').addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                btn.textContent = _i18n_t('parentShare.generating','Generating…');
+                try {
+                    const snap = await psCollectSnapshot();
+                    await setDoc(doc(db, 'shareSnapshots', tokenId), snap, { merge: true });
+                    showToast(_i18n_t('parentShare.updated','Snapshot updated.'));
+                } catch (err) { console.error('[parentShare update]', err); showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.')); }
+                paintManage(tokenId);
+            });
+            body.querySelector('#ps-revoke').addEventListener('click', async () => {
+                try {
+                    await updateDoc(doc(db, 'shareSnapshots', tokenId), { revoked: true });
+                    try { await setDoc(doc(db, 'users', studentUid), { shareSnapshotId: null }, { merge: true }); } catch (err) { console.error('[parentShare pointer]', err); }
+                    if (appState.userData) appState.userData.shareSnapshotId = null;
+                    showToast(_i18n_t('parentShare.revokedMsg','Link revoked.'));
+                } catch (err) { console.error('[parentShare revoke]', err); showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.')); return; }
+                paintEmpty();
+            });
+        }
+
+        function paintEmpty() {
+            body.innerHTML = `
+                ${createEmptyState(_i18n_t('parentShare.empty','Generate a link to share your progress with a parent — no login needed for them.'), '', '🔗')}
+                <div style="text-align:center;margin-top:12px;">
+                    <button class="btn btn-sm" id="ps-generate">${_i18n_t('parentShare.generate','Generate share link')}</button>
+                </div>
+            `;
+            body.querySelector('#ps-generate').addEventListener('click', async (e) => {
+                const btn = e.currentTarget;
+                btn.disabled = true;
+                btn.textContent = _i18n_t('parentShare.generating','Generating…');
+                try {
+                    const tokenId = psToken();
+                    const snap = await psCollectSnapshot();
+                    await setDoc(doc(db, 'shareSnapshots', tokenId), snap);
+                    try { await setDoc(doc(db, 'users', studentUid), { shareSnapshotId: tokenId }, { merge: true }); } catch (err) { console.error('[parentShare pointer]', err); }
+                    if (appState.userData) appState.userData.shareSnapshotId = tokenId;
+                    showToast(_i18n_t('parentShare.generated','Share link generated.'));
+                    paintManage(tokenId);
+                } catch (err) {
+                    console.error('[parentShare generate]', err);
+                    showToast(_i18n_t('parentShare.failed','Could not generate the link. Try again.'));
+                    paintEmpty();
+                }
+            });
+        }
+
+        if (!existingId) { paintEmpty(); return; }
+        try {
+            const snap = await getDoc(doc(db, 'shareSnapshots', existingId));
+            if (snap.exists && snap.data().revoked !== true) paintManage(existingId);
+            else paintEmpty();
+        } catch (err) { console.error('[parentShare lookup]', err); paintEmpty(); }
+    }
 
     // B.6 — Next Best Action
     (async () => {

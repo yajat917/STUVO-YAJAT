@@ -65,6 +65,10 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
             } catch (err) {
                 console.error('[teacherAttendance loadMarks]', err);
             }
+            // Bulk default: any student without a saved status starts as Present.
+            // Fresh class/date (no saved doc) => all-present. Editing existing =>
+            // saved values kept, newly-added students default to present.
+            roster.forEach(s => { if (!(s.id in marks)) marks[s.id] = true; });
         }
         render();
     }
@@ -82,7 +86,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
 
         const selectedClass = classes.find(c => c.id === selectedClassId);
         const presentCount = roster.filter(s => marks[s.id]).length;
-        const pct = roster.length ? Math.round((presentCount / roster.length) * 100) : 0;
+        const absentCount = roster.length - presentCount;
 
         container.innerHTML = `
             <div class="flex-col">
@@ -92,7 +96,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                     <div class="card-header" style="margin-bottom:16px;">
                         <div>
                             <div class="card-title">${selectedClass.name || _i18n_t('testReports.class','Class')} · ${today()}</div>
-                            <div class="hw-sub">${presentCount}/${roster.length} present · ${pct}%</div>
+                            <div class="hw-sub" id="attendance-counter">${_i18n_t('teacher.presentAbsentCount', { present: presentCount, absent: absentCount })}</div>
                         </div>
                         <select class="form-control" id="class-select" style="width:auto;padding:8px 12px;">
                             ${classes.map(c => `
@@ -103,20 +107,16 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
 
                     ${roster.length === 0
                         ? createEmptyState(_i18n_t('teacher.noStudents','No students in this class'), _i18n_t('teacher.noStudentsSub','Add students by username from the class page.'), '👥')
-                        : `<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
+                        : `<button class="btn btn-secondary" id="btn-mark-all-present" style="width:100%;margin-bottom:12px;">${_i18n_t('teacher.markAllPresent','Mark All Present')}</button>
+                        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px;">
                             ${roster.map((s, i) => `
                                 <div class="roster-item" style="display:flex;align-items:center;gap:12px;padding:10px 14px;
                                     background:rgba(255,255,255,0.03);border-radius:10px;">
                                     <div style="flex:1;font-size:14px;font-weight:500;">${_escapeHtml(s.name)}</div>
                                     <button class="btn btn-sm ${marks[s.id] ? '' : 'btn-secondary'}"
-                                        id="present-${s.id}" data-id="${s.id}" data-val="present"
+                                        id="toggle-${s.id}" data-id="${s.id}" data-toggle="1"
                                         style="margin-top:0;width:92px;">
-                                        ✓ Present
-                                    </button>
-                                    <button class="btn btn-sm ${marks[s.id] ? 'btn-secondary' : ''}"
-                                        id="absent-${s.id}" data-id="${s.id}" data-val="absent"
-                                        style="margin-top:0;width:92px;">
-                                        ✗ Absent
+                                        ${marks[s.id] ? '✓ ' + _i18n_t('attendance.present','Present') : '✗ ' + _i18n_t('attendance.absent','Absent')}
                                     </button>
                                 </div>
                             `).join('')}
@@ -133,13 +133,21 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
             await loadRoster();
         });
 
-        container.querySelectorAll('[data-val]').forEach(btn => {
+        container.querySelectorAll('[data-toggle]').forEach(btn => {
             btn.addEventListener('click', () => {
                 const id = btn.dataset.id;
-                marks[id] = btn.dataset.val === 'present';
+                marks[id] = !marks[id];
                 render();
             });
         });
+
+        const markAllBtn = container.querySelector('#btn-mark-all-present');
+        if (markAllBtn) {
+            markAllBtn.addEventListener('click', () => {
+                roster.forEach(s => { marks[s.id] = true; });
+                render();
+            });
+        }
 
         container.querySelector('#btn-save-attendance').addEventListener('click', async () => {
             const btn = container.querySelector('#btn-save-attendance');
