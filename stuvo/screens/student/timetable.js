@@ -13,7 +13,7 @@ async function renderStudentTimetable(container) {
 
     container.innerHTML = `
         <div class="flex-col">
-            ${createPageHeader(_i18n_t('nav.timetable','Timetable'), _i18n_t('timetable.subtitle','Read-only — managed by your teachers'))}
+            ${createPageHeader(_i18n_t('nav.timetable','Timetable'), _i18n_t('timetable.subtitle','Read-only: managed by your teachers'))}
             ${createSkeleton(3)}
         </div>
     `;
@@ -40,7 +40,7 @@ async function renderStudentTimetable(container) {
 
     container.innerHTML = `
         <div class="flex-col">
-            ${createPageHeader(_i18n_t('nav.timetable','Timetable'), _i18n_t('timetable.subtitle','Read-only — managed by your teachers'))}
+            ${createPageHeader(_i18n_t('nav.timetable','Timetable'), _i18n_t('timetable.subtitle','Read-only: managed by your teachers'))}
 
             ${createGlassCard(_i18n_t('timetable.weeklySchedule','Weekly Schedule'), `
                 ${slots.length === 0

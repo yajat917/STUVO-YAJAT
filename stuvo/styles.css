@@ -16,11 +16,32 @@
   --blue: #4F8CFF;
   --text: #E8EAF6;
   --text-dim: #9AA3C4;
+  --text-bright: #F4F2FF;
   --glass: rgba(255,255,255,0.055);
   --glass-border: rgba(255,255,255,0.09);
   --success: #10B981;
   --danger: #EF4444;
   --warning: #F59E0B;
+  /* Motion tokens: entering/exiting, on-screen morphing, drawers. ease-in is banned. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-press: 160ms;
+  --dur-tooltip: 150ms;
+  --dur-dropdown: 200ms;
+  --dur-modal: 240ms;
+  --dur-toast: 320ms;
+  --dur-drawer-open: 250ms;
+  --dur-drawer-close: 150ms;
+  --dur-stagger: 50ms;
+  --press-scale: 0.97;
+  --enter-scale: 0.95;
+  /* Status side-tab accents: systematized, one token per meaning. */
+  --tab-brand: #7C5CFC;
+  --tab-info: #93C5FD;
+  --tab-success: #10B981;
+  --tab-warning: #FDE68A;
+  --tab-urgent: #FF9B9B;
 }
 
 body {
@@ -73,12 +94,8 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   z-index: 0;
 }
 
-/* ─── GPU compositing hints — performance optimisation ─────────── */
-.mesh,
-.glass-card,
-.orb,
-.sidebar {
-}
+/* Motion system lives in the appendix at the end of this file.
+   Compositor guidance: only transform and opacity are animated. */
 
 /* ─── Layout ─────────────────────────────────────────────────── */
 .layout {
@@ -120,7 +137,7 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   font-size: 22px;
   letter-spacing: -0.5px;
   margin-bottom: 28px;
-  background: linear-gradient(135deg, #fff, var(--blue));
+  background: linear-gradient(135deg, var(--text-bright), var(--blue));
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -140,10 +157,14 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   text-decoration: none;
 }
 
+.nav-item { transition: background-color 160ms ease, color 160ms ease; }
+.nav-item:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .nav-item:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+}
 
 .nav-item.active {
-  color: #fff;
+  color: var(--text-bright);
 }
 
 .nav-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.7; flex-shrink: 0; }
@@ -189,8 +210,12 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   overflow: hidden;
 }
 
+.glass-card { transition: border-color 160ms ease; }
+@media (hover: hover) and (pointer: fine) {
+  /* Purpose: state indication on cards. Color only, never layout. */
 .glass-card:hover {
   border-color: rgba(124,92,252,0.35);
+}
 }
 
 .card-label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; margin-bottom: 14px; }
@@ -244,10 +269,14 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   cursor: pointer;
 }
 
-.orb:hover {
+/* Purpose: press feedback on the streak orb. Subtle scale only, transform-only. */
+.orb { transition: transform var(--dur-press) var(--ease-out); }
+@media (hover: hover) and (pointer: fine) {
+  .orb:hover { transform: scale(1.02); }
 }
+.orb:active { transform: scale(var(--press-scale)); }
 
-.orb-num { font-family: 'Sora', sans-serif; font-size: 32px; font-weight: 800; color: #fff; }
+.orb-num { font-family: 'Sora', sans-serif; font-size: 32px; font-weight: 800; color: var(--text-bright); }
 .streak-label { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
 .streak-sub { font-size: 12px; color: var(--text-dim); }
 
@@ -258,12 +287,21 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .hw-item:last-child { border-bottom: none; }
-.hw-item:hover { padding-left: 6px; }
+.hw-item { transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease; }
+@media (hover: hover) and (pointer: fine) {
+  /* Purpose: list highlight. translateX replaces the old padding-left shift (layout). */
+  .hw-item:hover { transform: translateX(6px); }
+}
+.hw-item:active { transform: translateX(6px) scale(0.995); }
 
+.roster-item, .approval-item { transition: background-color 160ms ease, transform var(--dur-press) var(--ease-out); }
+@media (hover: hover) and (pointer: fine) {
 .roster-item:hover,
 .approval-item:hover {
   background: rgba(255,255,255,0.04);
 }
+}
+.roster-item:active, .approval-item:active { transform: scale(0.99); }
 
 .hw-title { font-size: 14px; font-weight: 500; }
 .hw-sub { font-size: 12px; color: var(--text-dim); margin-top: 3px; }
@@ -286,15 +324,20 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
   background: linear-gradient(135deg, var(--violet), var(--blue));
-  color: #fff; font-size: 13px; font-weight: 600;
+  color: var(--text-bright); font-size: 13px; font-weight: 600;
   padding: 10px 18px; border-radius: 12px; border: none; cursor: pointer;
   margin-top: 16px; width: 100%; justify-content: center;
   text-decoration: none;
   font-family: 'Inter', sans-serif;
+  /* Purpose: press feedback. Transform-only. No shadow animation (static shadow ok). */
+  transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease;
 }
+.btn:active { transform: scale(var(--press-scale)); }
 
+@media (hover: hover) and (pointer: fine) {
 .btn:hover {
-  box-shadow: 0 0 30px rgba(124,92,252,0.5), 0 0 60px rgba(124,92,252,0.2);
+  background: linear-gradient(135deg, #8A68FF, #5E97FF);
+}
 }
 
 .btn-sm {
@@ -318,8 +361,11 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   border: 1px solid var(--glass-border);
   color: var(--text);
 }
+.btn-secondary:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .btn-secondary:hover {
   background: rgba(255,255,255,0.1);
+}
 }
 
 .btn-danger {
@@ -327,14 +373,19 @@ html[lang="te"] body { font-family: 'Noto Sans Telugu', 'Inter', sans-serif; }
   border: 1px solid rgba(239,68,68,0.4);
   color: #FCA5A5;
 }
+.btn-danger:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .btn-danger:hover { background: rgba(239,68,68,0.3); }
-
+}
 .btn-success {
   background: rgba(16,185,129,0.2);
   border: 1px solid rgba(16,185,129,0.4);
   color: #6EE7B7;
 }
+.btn-success:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .btn-success:hover { background: rgba(16,185,129,0.3); }
+}
 
 /* ─── Forms ──────────────────────────────────────────────────── */
 .form-group { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
@@ -383,7 +434,10 @@ tbody td {
 
 tbody tr:last-child td { border-bottom: none; }
 
+tbody tr { transition: background-color 160ms ease; }
+@media (hover: hover) and (pointer: fine) {
 tbody tr:hover { background: rgba(255,255,255,0.03); }
+}
 
 /* ─── Tabs ───────────────────────────────────────────────────── */
 .tabs {
@@ -408,13 +462,18 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   cursor: pointer;
   font-family: 'Inter', sans-serif;
   text-align: center;
+  /* Purpose: tab state indication. Transform-only press, color-only hover. */
+  transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, color 160ms ease;
 }
+.tab-btn:active { transform: scale(var(--press-scale)); }
 
+@media (hover: hover) and (pointer: fine) {
 .tab-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+}
 
 .tab-btn.active {
   background: linear-gradient(135deg, rgba(124,92,252,0.4), rgba(79,140,255,0.25));
-  color: #fff;
+  color: var(--text-bright);
   border: 1px solid rgba(124,92,252,0.35);
 }
 
@@ -469,7 +528,11 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   font-size: 16px;
   display: flex; align-items: center; justify-content: center;
 }
+.modal-close { transition: background-color 160ms ease, color 160ms ease, transform var(--dur-press) var(--ease-out); }
+.modal-close:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .modal-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
+}
 
 /* ─── Toast ──────────────────────────────────────────────────── */
 #toast-container {
@@ -487,7 +550,7 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   border-radius: 12px;
   font-size: 13px;
   font-weight: 500;
-  color: #fff;
+  color: var(--text-bright);
   /* Perf: no backdrop-filter — backgrounds are 0.85 alpha so solid paint
      looks identical without per-toast backdrop filtering. */
   max-width: 300px;
@@ -531,7 +594,10 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   color: var(--text-dim);
   cursor: pointer;
   font-family: 'Inter', sans-serif;
+  /* Purpose: high-frequency attendance toggles get instant state change, press scale only. */
+  transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, color 160ms ease;
 }
+.att-toggle button:active { transform: scale(var(--press-scale)); }
 
 .att-toggle button.present.active { background: rgba(16,185,129,0.3); color: #6EE7B7; }
 .att-toggle button.absent.active { background: rgba(239,68,68,0.3); color: #FCA5A5; }
@@ -617,7 +683,11 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   color: #C4B5FD;
   cursor: pointer;
 }
+.tt-slot.filled { transition: background-color 160ms ease, transform var(--dur-press) var(--ease-out); }
+.tt-slot.filled:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .tt-slot.filled:hover { background: linear-gradient(135deg, rgba(124,92,252,0.35), rgba(79,140,255,0.25)); }
+}
 
 .tt-slot.today-col {
   background: rgba(79,140,255,0.08);
@@ -632,8 +702,11 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   border: 1px solid var(--glass-border);
   border-radius: 16px;
   padding: 18px;
+  transition: border-color 160ms ease;
 }
+@media (hover: hover) and (pointer: fine) {
 .post-card:hover { border-color: rgba(124,92,252,0.3); }
+}
 
 .post-author { font-size: 13px; font-weight: 600; }
 .post-time { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
@@ -720,8 +793,13 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   cursor: pointer;
   font-size: 14px;
   margin-bottom: 8px;
+  /* Purpose: answer press feedback + selection state. Transform-only press. */
+  transition: transform var(--dur-press) var(--ease-out), border-color 160ms ease, background-color 160ms ease;
 }
+.quiz-option:active { transform: scale(0.98); }
+@media (hover: hover) and (pointer: fine) {
 .quiz-option:hover { border-color: rgba(124,92,252,0.5); background: rgba(124,92,252,0.1); }
+}
 .quiz-option.selected { border-color: var(--violet); background: rgba(124,92,252,0.2); color: #C4B5FD; }
 .quiz-option.correct { border-color: var(--success); background: rgba(16,185,129,0.15); color: #6EE7B7; }
 .quiz-option.incorrect { border-color: var(--danger); background: rgba(239,68,68,0.15); color: #FCA5A5; }
@@ -780,12 +858,17 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
+  /* Purpose: press feedback. Transform-only. Static shadow kept, never transitioned. */
+  box-shadow: 0 2px 10px rgba(124,92,252,0.12);
+  transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease, color 160ms ease;
 }
+.quick-action-btn:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .quick-action-btn:hover {
   background: rgba(124,92,252,0.15);
   border-color: rgba(124,92,252,0.35);
   color: #C4B5FD;
-  box-shadow: 0 4px 16px rgba(124,92,252,0.2);
+}
 }
 
 /* ─── Skeleton loading (static placeholders — no shimmer) ───── */
@@ -863,13 +946,13 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
     font-family: 'Sora', sans-serif;
     font-weight: 800;
     font-size: 18px;
-    color: #fff;
+    color: var(--text-bright);
   }
   .mobile-top-header .mth-avatar {
     width: 30px; height: 30px; border-radius: 50%;
     background: linear-gradient(135deg, #7C5CFC, #4F8CFF);
     display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 700; color: #fff;
+    font-size: 12px; font-weight: 700; color: var(--text-bright);
   }
   .mobile-top-header .mth-accessibility-btn {
     display: inline-flex;
@@ -879,14 +962,20 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
     border-radius: 8px;
     background: rgba(255,255,255,0.07);
     border: 1px solid rgba(255,255,255,0.09);
-    color: #fff;
+    color: var(--text-bright);
     font-size: 15px;
     cursor: pointer;
     margin-right: 8px;
+    transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease;
   }
+  .mobile-top-header .mth-accessibility-btn:active {
+    transform: scale(var(--press-scale));
+  }
+  @media (hover: hover) and (pointer: fine) {
   .mobile-top-header .mth-accessibility-btn:hover {
     background: rgba(124,92,252,0.15);
     border-color: rgba(124,92,252,0.35);
+  }
   }
   .mobile-top-header .mth-actions {
     display: flex;
@@ -901,7 +990,7 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
     border-radius: 20px;
     background: rgba(255,255,255,0.07);
     border: 1px solid rgba(255,255,255,0.09);
-    color: #fff;
+    color: var(--text-bright);
     font-family: 'Inter', sans-serif;
     font-size: 11px;
     font-weight: 600;
@@ -936,7 +1025,10 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
     border: none;
     padding: 6px 10px;
     cursor: pointer;
+    /* Purpose: high-frequency bottom-nav. Instant state change, press scale only. */
+    transition: transform var(--dur-press) var(--ease-out), color 160ms ease;
   }
+  .mobile-nav-item:active { transform: scale(var(--press-scale)); }
   .mobile-nav-item.active {
     color: #C4B5FD;
   }
@@ -983,13 +1075,23 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
 }
 
 /* ─── Language Switcher (desktop + mobile) ───────────────────── */
-.lang-switcher-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:20px;background:var(--glass);border:1px solid var(--glass-border);backdrop-filter:blur(12px);color:var(--text);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;}
+.lang-switcher-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:20px;background:var(--glass);border:1px solid var(--glass-border);backdrop-filter:blur(12px);color:var(--text);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;transition:transform var(--dur-press) var(--ease-out), background-color 160ms ease;}
+.lang-switcher-btn:active{transform:scale(var(--press-scale));}
+@media (hover: hover) and (pointer: fine) {
 .lang-switcher-btn:hover{background:rgba(255,255,255,0.08);}
+}
 .lang-dropdown.hidden{display:none !important;}
+.lang-dropdown{transform-origin:top right;}
+.lang-option{transition:background-color 160ms ease;}
+@media (hover: hover) and (pointer: fine) {
 .lang-option:hover{background:rgba(124,92,252,0.08) !important;}
+}
 .lang-option.active{color:#C4B5FD !important;}
-.mth-accessibility-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);font-size:14px;cursor:pointer;}
+.mth-accessibility-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);font-size:14px;cursor:pointer;transition:transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease;}
+.mth-accessibility-btn:active{transform:scale(var(--press-scale));}
+@media (hover: hover) and (pointer: fine) {
 .mth-accessibility-btn:hover{background:rgba(124,92,252,0.15);border-color:rgba(124,92,252,0.35);}
+}
 @media (max-width: 768px){ .mth-accessibility-btn{width:28px;height:28px;font-size:13px;} }
 
 /* ─── First-time language prompt modal ───────────────────────── */
@@ -998,8 +1100,11 @@ tbody tr:hover { background: rgba(255,255,255,0.03); }
 .lang-prompt-title{font-family:'Sora',sans-serif;font-size:18px;font-weight:700;margin-bottom:8px;}
 .lang-prompt-sub{font-size:13px;color:var(--text-dim);margin-bottom:20px;line-height:1.6;}
 .lang-prompt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;}
-.lang-prompt-btn{padding:12px 8px;border-radius:12px;background:var(--glass);border:1px solid var(--glass-border);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;}
+.lang-prompt-btn{padding:12px 8px;border-radius:12px;background:var(--glass);border:1px solid var(--glass-border);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease, color 160ms ease;}
+.lang-prompt-btn:active{transform:scale(var(--press-scale));}
+@media (hover: hover) and (pointer: fine) {
 .lang-prompt-btn:hover{background:rgba(124,92,252,0.15);border-color:rgba(124,92,252,0.35);color:#C4B5FD;}
+}
 .lang-prompt-skip{font-size:12px;color:var(--text-dim);background:none;border:none;cursor:pointer;margin-top:8px;text-decoration:underline;}
 @media (max-width: 380px){ .lang-prompt-grid{grid-template-columns:repeat(2,1fr);} }
 
@@ -1052,7 +1157,10 @@ img, svg, video, canvas {
   display: inline-flex;
   align-items: center;
 }
+.app-footer-links a { transition: background-color 160ms ease, color 160ms ease; }
+@media (hover: hover) and (pointer: fine) {
 .app-footer-links a:hover { color: #C4B5FD; background: rgba(124,92,252,0.10); }
+}
 .app-footer-dot { color: var(--text-dim); opacity: 0.5; }
 .app-footer-copy { font-size: 12px; color: var(--text-dim); }
 .auth-footer { margin-top: 20px; text-align: center; width: 100%; }
@@ -1070,13 +1178,18 @@ img, svg, video, canvas {
   border-radius: 10px;
   background: rgba(255,255,255,0.07);
   border: 1px solid rgba(255,255,255,0.09);
-  color: #fff;
+  color: var(--text-bright);
   font-size: 17px;
   cursor: pointer;
   min-width: 44px;
   min-height: 44px;
+  /* Purpose: high-frequency nav toggle. Press scale only, no slide animation on button. */
+  transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease;
 }
+.mth-hamburger:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .mth-hamburger:hover { background: rgba(124,92,252,0.15); border-color: rgba(124,92,252,0.35); }
+}
 .hamburger-overlay {
   position: fixed; inset: 0;
   background: rgba(0,0,0,0.55);
@@ -1098,10 +1211,11 @@ img, svg, video, canvas {
   flex-direction: column;
   padding: 18px 14px;
   transform: translateX(-105%);
-  transition: transform 0.22s ease;
+  /* Purpose: spatial consistency for nav drawer. Asymmetric: opens calm, closes snappy. */
+  transition: transform var(--dur-drawer-close) var(--ease-drawer);
   overflow-y: auto;
 }
-.hamburger-drawer.open { transform: translateX(0); }
+.hamburger-drawer.open { transform: translateX(0); transition-duration: var(--dur-drawer-open); }
 .hamburger-drawer.hidden { display: none !important; }
 .hamburger-drawer:not(.hidden) { display: flex; }
 .ham-header {
@@ -1110,7 +1224,7 @@ img, svg, video, canvas {
 }
 .ham-logo {
   font-family: 'Sora', sans-serif; font-weight: 800; font-size: 20px;
-  background: linear-gradient(135deg, #fff, #4F8CFF);
+  background: linear-gradient(135deg, var(--text-bright), #4F8CFF);
   -webkit-background-clip: text; background-clip: text; color: transparent;
   text-decoration: none;
   padding: 8px 4px;
@@ -1122,7 +1236,11 @@ img, svg, video, canvas {
   cursor: pointer; font-size: 15px;
   display: inline-flex; align-items: center; justify-content: center;
 }
+.ham-close { transition: background-color 160ms ease, color 160ms ease, transform var(--dur-press) var(--ease-out); }
+.ham-close:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
 .ham-close:hover { color: var(--text); background: rgba(255,255,255,0.1); }
+}
 .ham-list { display: flex; flex-direction: column; gap: 4px; }
 .ham-item {
   display: flex; align-items: center; gap: 12px;
@@ -1131,9 +1249,14 @@ img, svg, video, canvas {
   color: var(--text-dim); text-decoration: none;
   background: transparent; border: 1px solid transparent; width: 100%;
   cursor: pointer; font-family: 'Inter', sans-serif; text-align: left;
+  /* Purpose: high-frequency nav. Instant state, press scale only. */
+  transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, color 160ms ease;
 }
+.ham-item:active { transform: scale(0.99); }
+@media (hover: hover) and (pointer: fine) {
 .ham-item:hover { background: rgba(255,255,255,0.05); color: var(--text); }
-.ham-item.active { color: #fff; background: linear-gradient(135deg, rgba(124,92,252,0.4), rgba(79,140,255,0.25)); border: 1px solid rgba(124,92,252,0.35); }
+}
+.ham-item.active { color: var(--text-bright); background: linear-gradient(135deg, rgba(124,92,252,0.4), rgba(79,140,255,0.25)); border: 1px solid rgba(124,92,252,0.35); }
 .ham-footer { margin-top: auto; padding-top: 14px; border-top: 1px solid var(--glass-border); }
 .ham-signout { color: var(--text-dim); }
 
@@ -1172,4 +1295,130 @@ img, svg, video, canvas {
 }
 @media (min-width: 769px) {
   .hamburger-drawer, .hamburger-overlay { display: none !important; }
+}
+
+/* ═══════════════════════════════════════════
+   MOTION APPENDIX — platform interaction layer.
+   Contract: only transform and opacity animate (plus color
+   on hover/state). No transition:all, no ease-in, no
+   scale(0) entrances, 300ms cap except rare celebrations.
+   ═══════════════════════════════════════════ */
+
+/* Purpose: spatial consistency. Modals are trigger-less so they stay centered,
+   entering from scale(0.95) plus opacity. Exits run faster than entrances. */
+.modal-overlay {
+  opacity: 1;
+  transition: opacity 180ms ease;
+}
+.modal-overlay[data-closing="true"] { opacity: 0; }
+.modal-overlay[data-closing="true"] .modal { transform: scale(var(--enter-scale)); opacity: 0; }
+.modal {
+  transform: scale(1);
+  opacity: 1;
+  transition: transform var(--dur-modal) var(--ease-out), opacity var(--dur-modal) var(--ease-out);
+}
+.modal-overlay[data-closing="true"] .modal {
+  transition-duration: 150ms;
+}
+@starting-style {
+  .modal-overlay { opacity: 0; }
+  .modal { transform: scale(var(--enter-scale)); opacity: 0; }
+}
+.modal[data-mounted="false"] { transform: scale(var(--enter-scale)); opacity: 0; }
+
+/* Purpose: prevent jarring pop-in. Toasts always enter and exit from the same
+   edge, calmer than controls, so they use ease over 300 to 400ms. */
+#toast-container { align-items: flex-end; }
+.toast {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+  transform-origin: bottom right;
+  transition: transform var(--dur-toast) ease, opacity var(--dur-toast) ease;
+}
+@starting-style {
+  .toast { transform: translateY(8px) scale(var(--enter-scale)); opacity: 0; }
+}
+.toast[data-mounted="false"] { transform: translateY(8px) scale(var(--enter-scale)); opacity: 0; }
+.toast[data-leaving="true"] { transform: translateY(6px) scale(var(--enter-scale)); opacity: 0; }
+
+/* Purpose: state indication. Dropdowns scale from their trigger, never center. */
+.lang-dropdown,
+#m-lang-dropdown {
+  transform: scale(1);
+  opacity: 1;
+  transform-origin: top right;
+  transition: transform var(--dur-dropdown) var(--ease-out), opacity var(--dur-dropdown) var(--ease-out);
+}
+@starting-style {
+  .lang-dropdown, #m-lang-dropdown { transform: scale(var(--enter-scale)); opacity: 0; }
+}
+
+/* Purpose: feedback on high-signal lists. Stagger is brief and never blocks taps. */
+.list-enter { opacity: 0; transform: translateY(6px) scale(1); }
+.list-enter[data-mounted="true"] {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: transform var(--dur-dropdown) var(--ease-out), opacity var(--dur-dropdown) var(--ease-out);
+  transition-delay: calc(var(--stagger-index, 0) * var(--dur-stagger));
+}
+
+/* Purpose: constant motion uses linear. Progress fills use scaleX, never width. */
+.progress-fill {
+  transform-origin: left center;
+  transform: scaleX(var(--progress, 0));
+  transition: transform 200ms linear;
+}
+.focus-ring-arc { transition: stroke-dashoffset 200ms linear; }
+
+/* Rare celebration exception: streak milestone and XP level-up may run longer
+   and use a subtle settle. Never on buttons, modals, or dropdowns. */
+@keyframes stuvo-celebrate {
+  0% { transform: scale(var(--enter-scale)); opacity: 0; }
+  60% { transform: scale(1.03); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.celebrate-once { animation: stuvo-celebrate 420ms var(--ease-out) both; }
+
+/* Status side-tab accents: one systematized token set replaces ad-hoc colors. */
+.status-tab { border-left: 3px solid var(--tab-brand); }
+.status-tab.is-brand { border-left-color: var(--tab-brand); }
+.status-tab.is-info { border-left-color: var(--tab-info); }
+.status-tab.is-success { border-left-color: var(--tab-success); }
+.status-tab.is-warning { border-left-color: var(--tab-warning); }
+.status-tab.is-urgent { border-left-color: var(--tab-urgent); }
+
+/* Shared press targets that only exist inside screen templates. */
+.badge, .mood-btn, .quick-support-btn, .preset-card, .user-card, .mobile-nav-item, .mth-lang-btn {
+  transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+.badge:active, .mood-btn:active, .quick-support-btn:active, .preset-card:active, .mth-lang-btn:active { transform: scale(var(--press-scale)); }
+@media (hover: hover) and (pointer: fine) {
+  .mood-btn:hover { border-color: rgba(124,92,252,0.35); background: rgba(124,92,252,0.08); }
+  .quick-support-btn:hover { border-color: rgba(124,92,252,0.35); background: rgba(124,92,252,0.1); }
+  .preset-card:hover { border-color: rgba(124,92,252,0.35); }
+}
+
+/* Tooltips: first appearance may delay, subsequent ones in the same run open
+   instantly with no further animation. Triggered via data-tip-instant. */
+.tts-tip, .simplify-tip {
+  transition: opacity var(--dur-tooltip) ease, transform var(--dur-tooltip) var(--ease-out);
+}
+.tts-tip[data-tip-instant="true"], .simplify-tip[data-tip-instant="true"] { transition-duration: 0ms; }
+
+/* Reduced motion: remove transform and position animation everywhere, including
+   Focus Mode and the Accessibility panel. Opacity and color state cues remain. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+  .hamburger-drawer, .modal, .toast, .orb, .hw-item, .quiz-option, .tab-btn, .btn,
+  .quick-action-btn, .ham-item, .mobile-nav-item, .list-enter, .celebrate-once {
+    transform: none !important;
+  }
+  .celebrate-once { animation: none !important; opacity: 1 !important; }
+  .list-enter { opacity: 1 !important; }
+  .progress-fill { transition: none !important; transform: scaleX(var(--progress, 0)) !important; }
 }

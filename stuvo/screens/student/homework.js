@@ -236,7 +236,7 @@ async function renderStudentHomework(container) {
                 <div class="card-header" style="margin-bottom:${isOpen ? '12px' : '0'};">
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:15px;font-weight:600;">${_escapeHtml(hw.title)}</div>
-                        <div class="hw-sub">${_escapeHtml(hw.subject) || '—'} · ${_escapeHtml(hw.className)} · ${_i18n_t('homework.dueWithDate',{date: formatDueDate(hw.deadline)})}</div>
+                        <div class="hw-sub">${_escapeHtml(hw.subject) || ','} · ${_escapeHtml(hw.className)} · ${_i18n_t('homework.dueWithDate',{date: formatDueDate(hw.deadline)})}</div>
                         <div style="font-size:11px;color:#FDE68A;margin-top:2px;" id="pred-${hw.id}"></div>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
@@ -262,27 +262,27 @@ async function renderStudentHomework(container) {
                     <span class="badge badge-green">🟢 ${completed.length} ${_i18n_t('homework.completed','Completed')}</span>
                 </div>
                 ${homework.length === 0 ? `<div class="glass-card">${createEmptyState(_i18n_t('homework.noHomeworkAtAll','No homework yet'),_i18n_t('homework.noHomeworkSub','When a teacher assigns homework to your class, it will appear here.'),'📚')}</div>` : `
-                <div class="glass-card" style="border-left:3px solid #FF9B9B;">
+                <div class="glass-card status-tab is-urgent">
                     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" data-toggle="dueSoon">
-                        <div style="font-weight:700;color:#FF9B9B;">🔴 ${_i18n_t('homework.dueSoon','Due Soon')} — ${_i18n_t('homework.dueSoonDesc','within 48 hours')}</div>
+                        <div style="font-weight:700;color:#FF9B9B;">🔴 ${_i18n_t('homework.dueSoon','Due Soon')}: ${_i18n_t('homework.dueSoonDesc','within 48 hours')}</div>
                         <span style="color:var(--text-dim);font-size:12px;">${_i18n_t('homework.itemsCount',{count: dueSoon.length})} ▼</span>
                     </div>
                     <div id="section-dueSoon" style="margin-top:12px;">
-                        ${dueSoon.length ? dueSoon.map((hw,i) => hwCardHTML(hw,i, openHwId===hw.id)).join('') : `<div style="font-size:13px;color:var(--text-dim);text-align:center;padding:12px;">${_i18n_t('homework.noHomeworkDueSoon',"No assignments due soon — you're on track!")}</div>`}
+                        ${dueSoon.length ? dueSoon.map((hw,i) => hwCardHTML(hw,i, openHwId===hw.id)).join('') : `<div style="font-size:13px;color:var(--text-dim);text-align:center;padding:12px;">${_i18n_t('homework.noHomeworkDueSoon',"No assignments due soon: you're on track!")}</div>`}
                     </div>
                 </div>
-                <div class="glass-card" style="border-left:3px solid #FDE68A;margin-top:12px;">
+                <div class="glass-card status-tab is-warning" style="margin-top:12px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" data-toggle="upcoming">
-                        <div style="font-weight:700;color:#FDE68A;">🟡 ${_i18n_t('homework.upcoming','Upcoming')} — ${_i18n_t('homework.upcomingDesc','more than 48 hours away')}</div>
+                        <div style="font-weight:700;color:#FDE68A;">🟡 ${_i18n_t('homework.upcoming','Upcoming')}: ${_i18n_t('homework.upcomingDesc','more than 48 hours away')}</div>
                         <span style="color:var(--text-dim);font-size:12px;">${_i18n_t('homework.itemsCount',{count: upcoming.length})} ▼</span>
                     </div>
                     <div id="section-upcoming" style="margin-top:12px;">
                         ${upcoming.length ? upcoming.map((hw,i) => hwCardHTML(hw,i, openHwId===hw.id)).join('') : `<div style="font-size:13px;color:var(--text-dim);text-align:center;padding:12px;">${_i18n_t('homework.noUpcoming','No upcoming assignments.')}</div>`}
                     </div>
                 </div>
-                <div class="glass-card" style="border-left:3px solid #7EFFD4;margin-top:12px;opacity:0.95;">
+                <div class="glass-card status-tab is-success" style="margin-top:12px;opacity:0.95;">
                     <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" data-toggle="completed">
-                        <div style="font-weight:700;color:#7EFFD4;">🟢 ${_i18n_t('homework.completed','Completed')} — ${_i18n_t('homework.completedDesc','collapsed by default')}</div>
+                        <div style="font-weight:700;color:#7EFFD4;">🟢 ${_i18n_t('homework.completed','Completed')}: ${_i18n_t('homework.completedDesc','collapsed by default')}</div>
                         <span style="color:var(--text-dim);font-size:12px;">${_i18n_t('homework.itemsCount',{count: completed.length})} ${completed.length ? '▼' : ''}</span>
                     </div>
                     <div id="section-completed" style="display:none;margin-top:12px;">
@@ -295,8 +295,7 @@ async function renderStudentHomework(container) {
 
         [...dueSoon, ...upcoming, ...completed].forEach(hw => {
             const card = container.querySelector(`#hw-card-${hw.id}`);
-            if (!card) return;
-            card.addEventListener('click', e => {
+            if (!card) return;            card.addEventListener('click', e => {
                 if (e.target.closest('.quiz-option, button, input, textarea, select')) return;
                 openHwId = openHwId === hw.id ? null : hw.id;
                 quizAnswers = {};
@@ -315,6 +314,10 @@ async function renderStudentHomework(container) {
               }
             }
         });
+
+        // Brief staggered entrance for homework cards. Runs once per mount so
+        // expanding a card does not replay the animation. Items stay tappable.
+        try { if (typeof stageListEnter === 'function') stageListEnter(container, '[id^="hw-card-"]'); } catch {}
 
         container.querySelector('[data-toggle="dueSoon"]')?.addEventListener('click', () => {
             const el = container.querySelector('#section-dueSoon');
@@ -465,7 +468,7 @@ async function renderStudentHomework(container) {
                         showToast(_i18n_t('homework.willSubmitWhenOnline','Will submit when you\'re back online'), 'info');
                         submitBtn.disabled = true;
                         submitBtn.textContent = _i18n_t('homework.queuedForSync','Queued for sync');
-                        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = "📴 " + _i18n_t('homework.offlineQueued',"You're offline — queued and will submit automatically when back online."); }
+                        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = "📴 " + _i18n_t('homework.offlineQueued',"You're offline: queued and will submit automatically when back online."); }
                     } catch (e) {
                         console.error('[offlineQueue manual queue]', e);
                         showToast(_i18n_t('homework.queueFailed','Failed to queue submission'), 'error');
@@ -507,7 +510,7 @@ async function renderStudentHomework(container) {
                             await queueOfflineHomework(hw.classId, hw.id, uid, offlineData);
                             showToast(_i18n_t('homework.willSubmitWhenOnline','Will submit when you\'re back online'), 'info');
                             submitBtn.textContent = _i18n_t('homework.queuedForSync','Queued for sync');
-                        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = "📴 " + _i18n_t('homework.offlineQueued',"You're offline — queued and will submit automatically when back online."); }
+                        if (statusEl) { statusEl.style.display = 'block'; statusEl.textContent = "📴 " + _i18n_t('homework.offlineQueued',"You're offline: queued and will submit automatically when back online."); }
                             return;
                         } catch (qe) { console.error('[offlineQueue fallback queue]', qe); }
                     }
@@ -532,7 +535,7 @@ async function renderStudentHomework(container) {
                     const esc = (s) => String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
                     const fmt = (typeof renderFormattedAnswer === 'function') ? renderFormattedAnswer : (t) => esc(t).replace(/\n/g,'<br>');
                     out.innerHTML = `
-                        <div class="glass-card" style="margin-top:8px;background:rgba(124,92,252,0.06);">
+                        <div style="margin-top:8px;border-top:1px solid var(--glass-border);padding-top:16px;">
                             <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${_i18n_t('homework.summary','Summary')}</div>
                             <div style="font-size:14px;line-height:1.7;margin-bottom:12px;">${fmt(data.summary)}</div>
                             <div style="font-size:13px;font-weight:600;margin-bottom:6px;">${_i18n_t('homework.keyPoints','Key Points')}</div>
@@ -551,7 +554,7 @@ async function renderStudentHomework(container) {
                         sumBtn.click();
                     });
                 } catch (err) {
-                    out.innerHTML = `<div style="font-size:13px;color:var(--text-dim);padding:12px;background:rgba(255,255,255,0.04);border-radius:8px;">${_i18n_t('homework.couldNotGenerateSummary',"Couldn't generate a summary right now — you can still read the full assignment above.")}</div>`;
+                    out.innerHTML = `<div style="font-size:13px;color:var(--text-dim);padding:12px;background:rgba(255,255,255,0.04);border-radius:8px;">${_i18n_t('homework.couldNotGenerateSummary',"Couldn't generate a summary right now: you can still read the full assignment above.")}</div>`;
                     console.error('[summarize]', err);
                 } finally {
                     sumBtn.disabled = false; sumBtn.textContent = _i18n_t('homework.summariseForMe','Summarise for me');
@@ -606,7 +609,7 @@ async function renderStudentHomework(container) {
                             const note = document.createElement('div');
                             note.className='ext-time-note';
                             note.style.cssText='background:rgba(79,140,255,0.08);border:1px solid rgba(79,140,255,0.2);border-radius:10px;padding:10px;margin-top:10px;font-size:12px;color:#93C5FD;';
-                            note.textContent=_i18n_t('homework.extraTimeNote','You have extra time on this assignment') + (d.extraTimeMinutes? ` (+${d.extraTimeMinutes} minutes)`:'') + (d.note? ` — ${d.note}`:'');
+                            note.textContent=_i18n_t('homework.extraTimeNote','You have extra time on this assignment') + (d.extraTimeMinutes? ` (+${d.extraTimeMinutes} minutes)`:'') + (d.note? `: ${d.note}`:'');
                             card.appendChild(note);
                         }
                     }

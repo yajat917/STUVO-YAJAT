@@ -72,8 +72,8 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                                                     <span style="font-weight:600;">${_escapeHtml(u.officialName) || _i18n_t('admin.unnamedUser','Unnamed')}</span>
                                                 </div>
                                             </td>
-                                            <td style="color:var(--text-dim);">@${_escapeHtml(u.username) || '—'}</td>
-                                            <td style="color:var(--text-dim);">${u.email ? `<a href="mailto:${_escapeHtml(u.email)}" style="color:inherit;">${_escapeHtml(u.email)}</a>` : '—'}</td>
+                                            <td style="color:var(--text-dim);">@${_escapeHtml(u.username) || ','}</td>
+                                            <td style="color:var(--text-dim);">${u.email ? `<a href="mailto:${_escapeHtml(u.email)}" style="color:inherit;">${_escapeHtml(u.email)}</a>` : ','}</td>
                                             <td>${createBadge(u.role === 'admin' ? _i18n_t('admin.roleAdmin','Admin') : u.role === 'teacher' ? _i18n_t('auth.teacher','Teacher') : _i18n_t('auth.student','Student'),
                                                 u.role === 'admin' ? 'violet' : u.role === 'teacher' ? 'blue' : 'green')}</td>
                                             <td>${createBadge(u.status === 'pending' ? _i18n_t('admin.statusPending','Pending') : u.status === 'rejected' ? _i18n_t('admin.statusRejected','Rejected') : _i18n_t('admin.statusActive','Active'),

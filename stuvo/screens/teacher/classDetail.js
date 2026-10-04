@@ -92,7 +92,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
 
         container.innerHTML = `
             <div class="flex-col">
-                ${createPageHeader(cls.name || 'Unnamed Class', `${cls.subject || '—'} · ${cls.room || 'No room'}`)}
+                ${createPageHeader(cls.name || 'Unnamed Class', `${cls.subject || ','} · ${cls.room || 'No room'}`)}
 
                 <a href="#/teacher/classes" style="color:#C4B5FD;font-size:13px;text-decoration:none;margin-bottom:4px;">← ${_i18n_t('teacher.backToClasses','Back to Classes')}</a>
 
@@ -151,8 +151,8 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                                                 <span style="font-weight:600;">${_escapeHtml(s.officialName) || _i18n_t('teacher.unnamed','Unnamed')}</span>
                                             </div>
                                         </td>
-                                        <td style="color:var(--text-dim);">@${_escapeHtml(s.username) || '—'}</td>
-                                        <td style="color:var(--text-dim);">${s.email ? `<a href="mailto:${_escapeHtml(s.email)}" style="color:inherit;">${_escapeHtml(s.email)}</a>` : '—'}</td>
+                                        <td style="color:var(--text-dim);">@${_escapeHtml(s.username) || ','}</td>
+                                        <td style="color:var(--text-dim);">${s.email ? `<a href="mailto:${_escapeHtml(s.email)}" style="color:inherit;">${_escapeHtml(s.email)}</a>` : ','}</td>
                                         <td style="text-align:right;">
                                             <button class="btn btn-danger btn-sm" data-remove-student="${s.id}" style="margin-top:0;">${_i18n_t('teacher.removeStudent','Remove')}</button>
                                         </td>

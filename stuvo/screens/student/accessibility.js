@@ -50,7 +50,7 @@ function ensureAccessibilityStyles() {
   s.textContent = `
     :root { --text-scale: 1; --line-height-base: 1.6; }
     html { font-size: calc(16px * var(--text-scale)); }
-    /* Data attribute driven text scaling — also via zoom for px-based layouts */
+    /* Data attribute driven text scaling: also via zoom for px-based layouts */
     html[data-text-size="normal"] { --text-scale: 1; zoom: 1; }
     html[data-text-size="large"] { --text-scale: 1.15; zoom: 1.08; }
     html[data-text-size="xlarge"] { --text-scale: 1.30; zoom: 1.18; }
@@ -95,13 +95,13 @@ function ensureAccessibilityStyles() {
     }
     html.high-contrast .mesh { display: none !important; }
     html.high-contrast .particle { display: none !important; }
-    /* Keyboard focus visible — base */
+    /* Keyboard focus visible: base */
     *:focus-visible {
       outline: 3px solid #7C5CFC !important;
       outline-offset: 2px !important;
       border-radius: 6px;
     }
-    /* Enhanced focus — thicker, more visible */
+    /* Enhanced focus: thicker, more visible */
     html.enhanced-focus *:focus-visible {
       outline: 4px solid #7C5CFC !important;
       outline-offset: 3px !important;
@@ -146,7 +146,7 @@ function ensureAccessibilityStyles() {
     html[data-line-spacing="loose"] .form-group label,
     html[data-line-spacing="loose"] .empty-sub { line-height: 1.85 !important; }
 
-    /* Color-blind friendly mode — secondary indicators */
+    /* Color-blind friendly mode: secondary indicators */
     html.color-blind .hw-badge.success { border-style: solid !important; border-width: 2px !important; }
     html.color-blind .hw-badge.success::before { content: "✓ "; font-weight: 800; }
     html.color-blind .hw-badge.urgent::before { content: "! "; font-weight: 800; }
@@ -194,14 +194,14 @@ function ensureAccessibilityStyles() {
     html.larger-tap .notification-bell-btn,
     html.larger-tap .global-search-btn { width: 48px !important; height: 48px !important; }
 
-    /* No hover dependency — ensure critical controls always visible */
+    /* No hover dependency: ensure critical controls always visible */
     html.no-hover .hw-item .hw-badge,
     html.no-hover .glass-card .badge,
     html.no-hover .btn-secondary,
     html.no-hover [data-hover-only] { opacity: 1 !important; visibility: visible !important; display: inline-flex !important; }
     html.no-hover .hw-item:hover { transform: none !important; padding-left: 0 !important; }
 
-    /* Comfortable controls — increase spacing near destructive actions */
+    /* Comfortable controls: increase spacing near destructive actions */
     html.comfortable .btn + .btn,
     html.comfortable .btn-danger { margin-left: 12px !important; }
     html.comfortable .form-group { margin-bottom: 18px !important; }
@@ -220,7 +220,7 @@ function ensureAccessibilityStyles() {
     /* Step-by-step forms */
     .step-form-progress { display: flex; gap: 8px; margin-bottom: 18px; align-items: center; }
     .step-form-dot { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; background: rgba(255,255,255,0.08); border: 1px solid var(--glass-border); color: var(--text-dim); }
-    .step-form-dot.active { background: linear-gradient(135deg,#7C5CFC,#4F8CFF); color: #fff; border-color: rgba(124,92,252,0.5); }
+    .step-form-dot.active { background: linear-gradient(135deg,#7C5CFC,#4F8CFF); color: var(--text-bright); border-color: rgba(124,92,252,0.5); }
     .step-form-dot.done { background: rgba(16,185,129,0.15); color: #6EE7B7; border-color: rgba(16,185,129,0.35); }
     .step-form-panel { display: none; }
     .step-form-panel.active { display: block; }
@@ -228,40 +228,52 @@ function ensureAccessibilityStyles() {
     /* Reading ruler */
     #reading-ruler { position: fixed; left: 0; right: 0; height: 36px; background: rgba(124,92,252,0.12); border-top: 2px solid rgba(124,92,252,0.35); border-bottom: 2px solid rgba(124,92,252,0.35); pointer-events: none; z-index: 9995; display: none; backdrop-filter: blur(2px); }
     #reading-ruler.show { display: block !important; }
-    #reading-ruler-handle { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; border-radius: 8px; background: rgba(124,92,252,0.9); color:#fff; display:flex; align-items:center; justify-content:center; font-size:12px; pointer-events:auto; cursor:grab; user-select:none; box-shadow:0 2px 8px rgba(0,0,0,0.3); }
+    #reading-ruler-handle { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); width: 28px; height: 28px; border-radius: 8px; background: rgba(124,92,252,0.9); color: var(--text-bright); display:flex; align-items:center; justify-content:center; font-size:12px; pointer-events:auto; cursor:grab; user-select:none; box-shadow:0 2px 8px rgba(0,0,0,0.3); }
 
-    /* Word highlighting during TTS */
-    .tts-highlight-word { background: rgba(124,92,252,0.35) !important; color: #fff !important; border-radius: 4px; padding: 1px 3px; }
+    /* TTS highlight: instant state change, never animated (high-frequency speech path). */
+    .tts-highlight-word { background: rgba(124,92,252,0.35) !important; color: var(--text-bright) !important; border-radius: 4px; padding: 1px 3px; }
     .tts-highlight-sentence { background: rgba(124,92,252,0.12) !important; border-left: 3px solid rgba(124,92,252,0.5); padding-left: 8px !important; border-radius: 6px; }
     .tts-controls { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px; }
-    .tts-controls button { width: 28px; height: 28px; border-radius: 8px; background: var(--glass); border:1px solid var(--glass-border); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:12px; }
+    .tts-controls button { width: 28px; height: 28px; border-radius: 8px; background: var(--glass); border:1px solid var(--glass-border); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:12px; transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease; }
+    .tts-controls button:active { transform: scale(var(--press-scale)); }
+    @media (hover: hover) and (pointer: fine) {
     .tts-controls button:hover { background: rgba(124,92,252,0.12); }
+    }
 
-    /* Simplify-on-tap tooltip */
-    #simplify-tooltip { position: fixed; max-width: 300px; background: #111827; border:1px solid var(--glass-border); border-radius:12px; padding:14px; box-shadow:0 20px 60px rgba(0,0,0,0.5); z-index: 9996; display: none; font-size:13px; line-height:1.6; }
+    /* Simplify-on-tap tooltip: tap-triggered, so it appears instantly with no
+       delay and no entrance animation. Origin tracks the tapped word. */
+    #simplify-tooltip { position: fixed; max-width: 300px; background: #111827; border:1px solid var(--glass-border); border-radius:12px; padding:14px; box-shadow:0 20px 60px rgba(0,0,0,0.5); z-index: 9996; display: none; font-size:13px; line-height:1.6; transform-origin: top left; }
     #simplify-tooltip.show { display: block !important; }
     #simplify-tooltip .simplify-word { font-weight:700; color:#C4B5FD; font-size:14px; }
     #simplify-tooltip .simplify-meaning { color: var(--text); margin:6px 0; }
     #simplify-tooltip .simplify-example { color: var(--text-dim); font-size:12px; font-style: italic; background: rgba(255,255,255,0.04); padding:8px; border-radius:8px; margin-top:6px; }
     #simplify-tooltip .simplify-close { position:absolute; top:8px; right:8px; width:22px; height:22px; border-radius:6px; background: var(--glass); border:1px solid var(--glass-border); display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:11px; }
 
-    /* TTS btn, STT btn */
+    /* TTS btn, STT btn: press feedback only. Speech paths stay instant. */
     .tts-btn {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 6px 10px; border-radius: 8px;
       background: var(--glass); border: 1px solid var(--glass-border);
       color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer;
-      font-family: 'Inter', sans-serif;
+      font-family: var(--font-ui);
+      transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease;
     }
+    .tts-btn:active { transform: scale(var(--press-scale)); }
+    @media (hover: hover) and (pointer: fine) {
     .tts-btn:hover { background: rgba(124,92,252,0.15); border-color: rgba(124,92,252,0.35); }
+    }
     .tts-btn.speaking { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.35); color: #6EE7B7; }
     .stt-btn {
       width: 36px; height: 36px; border-radius: 10px;
       background: var(--glass); border: 1px solid var(--glass-border);
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; font-size: 16px;
+      transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease;
     }
+    .stt-btn:active { transform: scale(var(--press-scale)); }
+    @media (hover: hover) and (pointer: fine) {
     .stt-btn:hover { background: rgba(124,92,252,0.12); }
+    }
     .stt-btn.listening { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.4); }
     .access-toggle {
       position: relative; width: 48px; height: 26px; border-radius: 13px;
@@ -271,13 +283,15 @@ function ensureAccessibilityStyles() {
     .access-toggle.active { background: linear-gradient(135deg,#7C5CFC,#4F8CFF); border-color: rgba(124,92,252,0.5); }
     .access-toggle::after {
       content: ''; position: absolute; top: 2px; left: 2px;
-      width: 20px; height: 20px; border-radius: 50%; background: #fff;
+      width: 20px; height: 20px; border-radius: 50%; background: var(--text-bright);
       box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
-    .access-toggle.active::after { }
-    /* Preset cards */
-    .preset-card { cursor:pointer; border:2px solid transparent; }
+    /* Preset cards: press feedback. Toggle state changes stay instant. */
+    .preset-card { cursor:pointer; border:2px solid transparent; transition: transform var(--dur-press) var(--ease-out), border-color 160ms ease, background-color 160ms ease; }
+    .preset-card:active { transform: scale(0.99); }
+    @media (hover: hover) and (pointer: fine) {
     .preset-card:hover { border-color: rgba(124,92,252,0.35); }
+    }
     .preset-card.active { border-color: #7C5CFC !important; background: rgba(124,92,252,0.10) !important; }
   `;
   document.head.appendChild(s);
@@ -596,7 +610,7 @@ function maybeAutoRead(text, containerEl) {
     setTimeout(() => {
       if (window.speechSynthesis.speaking) return;
       speakWithHighlight(text, containerEl, null);
-      showToast('Auto-reading — tap ⏹ to stop', 'info');
+      showToast('Auto-reading: tap ⏹ to stop', 'info');
     }, 600);
   } catch (e) {}
 }
@@ -620,11 +634,11 @@ function startListening({ lang = _ttsLang(), onResult, onInterim = null, onError
   };
   recognition.onerror = (event) => {
     const genericMessages = {
-      'no-speech': _i18n_t('accessibility.sttNoSpeech', "Didn't catch that — try again."),
+      'no-speech': _i18n_t('accessibility.sttNoSpeech', "Didn't catch that: try again."),
       'not-allowed': _i18n_t('accessibility.micDenied', 'Microphone access is needed for this.'),
-      'network': _i18n_t('accessibility.sttNetwork', 'Connection issue — try again.'),
+      'network': _i18n_t('accessibility.sttNetwork', 'Connection issue: try again.'),
     };
-    if (onError) onError(genericMessages[event.error] || _i18n_t('accessibility.sttFailed', 'Something went wrong — try again.'));
+    if (onError) onError(genericMessages[event.error] || _i18n_t('accessibility.sttFailed', 'Something went wrong: try again.'));
   };
   if (onEnd) recognition.onend = onEnd;
   recognition.start();
@@ -680,7 +694,7 @@ function attachSTT(inputEl) {
       if (!recognition) resetBtn();
     } catch {
       resetBtn();
-      showToast(_i18n_t('accessibility.sttFailed', 'Something went wrong — try again.'), 'info');
+      showToast(_i18n_t('accessibility.sttFailed', 'Something went wrong: try again.'), 'info');
     }
   });
 }
@@ -1126,19 +1140,19 @@ async function renderStudentAccessibility(container) {
   try { localStorage.setItem('stuvo_accessibility_cache', JSON.stringify(prefs)); } catch {}
 
   const _checked = (v) => v ? 'active' : '';
-  const _selectActive = (cur, val) => cur===val ? 'background:linear-gradient(135deg,#7C5CFC,#4F8CFF);color:#fff;border-color:rgba(124,92,252,0.5);' : '';
+  const _selectActive = (cur, val) => cur===val ? 'background:linear-gradient(135deg,#7C5CFC,#4F8CFF);color:var(--text-bright);border-color:rgba(124,92,252,0.5);' : '';
 
   container.innerHTML = `
     <div class="flex-col">
-      ${createPageHeader(_t('accessibility.title',_i18n_t('nav.accessibility','Accessibility')), _t('accessibility.subtitle',_i18n_t('accessibility.subtitle','Customize Stuvo to make learning more comfortable and accessible for you — changes apply instantly')))}
-      <div class="glass-card" style="border-left:3px solid #7C5CFC; padding:18px;">
+      ${createPageHeader(_t('accessibility.title',_i18n_t('nav.accessibility','Accessibility')), _t('accessibility.subtitle',_i18n_t('accessibility.subtitle','Customize Stuvo to make learning more comfortable and accessible for you: changes apply instantly')))}
+      <div class="glass-card status-tab is-brand" style="padding:18px;">
         <p style="font-size:13px;color:var(--text-dim);line-height:1.7;margin:0;">${_t('accessibility.intro','Adjust text, focus, motion, and reading support to suit your needs. Presets offer quick starts, but every setting can be fine-tuned.')}</p>
       </div>
 
       <!-- Language -->
-      <div class="glass-card" style="border-left: 3px solid #7C5CFC;">
+      <div class="glass-card status-tab is-brand">
         <div class="card-label">${_t('accessibility.languageTitle',_i18n_t('accessibility.languageTitle','Language / भाषा'))}</div>
-        <p style="font-size:13px; color: var(--text-dim); line-height:1.6; margin-bottom:6px;">${_t('accessibility.languageDesc',_i18n_t('accessibility.languageDesc','Choose your preferred language — UI and AI answers will respond in this language'))}</p>
+        <p style="font-size:13px; color: var(--text-dim); line-height:1.6; margin-bottom:6px;">${_t('accessibility.languageDesc',_i18n_t('accessibility.languageDesc','Choose your preferred language: UI and AI answers will respond in this language'))}</p>
         <p style="font-size:11px; color: var(--text-dim); line-height:1.5; margin-bottom:14px; background: rgba(124,92,252,0.06); padding:8px 10px; border-radius:8px; border:1px solid rgba(124,92,252,0.12);">${_t('accessibility.languageNote',_i18n_t('accessibility.languageNote','AI-generated content (Doubt Solver, Summaries, Quizzes) will also respond in your selected language. Math notation stays universal.'))}</p>
         <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;" id="access-lang-grid">
           ${Object.entries((typeof SUPPORTED_LANGUAGES !== 'undefined' ? SUPPORTED_LANGUAGES : {en:'English', hi:'हिन्दी', bn:'বাংলা', mr:'मराठी', te:'తెలుగు', ta:'தமிழ்'})).map(([code, name]) => `
@@ -1151,10 +1165,10 @@ async function renderStudentAccessibility(container) {
         <div style="font-size:11px; color: var(--text-dim); margin-top:10px; text-align:center;">${_t('language.current',_i18n_t('language.current','Current Language'))}: <span style="font-weight:700; color:#C4B5FD; text-transform:uppercase;">${_curLang}</span></div>
       </div>
 
-      <!-- Grade & Stream — Personalization (editable) -->
-      <div class="glass-card" id="grade-stream-card" style="border-left:3px solid #C4B5FD;">
+      <!-- Grade & Stream: Personalization (editable) -->
+      <div class="glass-card status-tab is-brand" id="grade-stream-card">
         <div class="card-label">🎓 Grade & Stream</div>
-        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px;line-height:1.6;">Your grade and stream personalize subject lists across Study Hub. Change anytime — taxonomy subjects merge with your real enrolled classes. <span style="font-size:11px;opacity:0.8;">(Deduped by exact string match)</span></p>
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px;line-height:1.6;">Your grade and stream personalize subject lists across Study Hub. Change anytime: taxonomy subjects merge with your real enrolled classes. <span style="font-size:11px;opacity:0.8;">(Deduped by exact string match)</span></p>
         <div id="gs-step-grade">
           <div style="font-weight:700;font-size:13px;margin-bottom:8px;">What grade are you in?</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;" id="gs-grade-buttons">
@@ -1183,7 +1197,7 @@ async function renderStudentAccessibility(container) {
       <!-- Presets -->
       <div class="glass-card">
         <div class="card-label">⚡ Quick Presets</div>
-        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px;line-height:1.6;">Presets apply a recommended combination — you can still customize each setting afterwards.</p>
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px;line-height:1.6;">Presets apply a recommended combination: you can still customize each setting afterwards.</p>
         <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:12px;" id="preset-grid">
           <div class="glass-card preset-card ${JSON.stringify(prefs).includes('large')?'':''}" data-preset="default" style="padding:16px;text-align:center;margin:0;">
             <div style="font-size:22px;">🔄</div><div style="font-weight:700;font-size:13px;margin-top:6px;">Default</div><div style="font-size:11px;color:var(--text-dim);margin-top:4px;">Normal settings</div>
@@ -1209,7 +1223,7 @@ async function renderStudentAccessibility(container) {
             <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
               <div>
                 <div style="font-weight:700; font-size:14px;">${_t('accessibility.textSize',_i18n_t('accessibility.textSize','Text Size'))}</div>
-                <div style="font-size:12px; color: var(--text-dim); margin-top:4px;">${_t('accessibility.textSizeDesc',_i18n_t('accessibility.textSizeDesc','Global scaling — affects navigation, cards, forms, tables, dialogs, homework, AI responses'))}</div>
+                <div style="font-size:12px; color: var(--text-dim); margin-top:4px;">${_t('accessibility.textSizeDesc',_i18n_t('accessibility.textSizeDesc','Global scaling: affects navigation, cards, forms, tables, dialogs, homework, AI responses'))}</div>
               </div>
             </div>
             <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;" role="radiogroup" aria-label="Text Size">
@@ -1325,7 +1339,7 @@ async function renderStudentAccessibility(container) {
             </div>
           </div>
         </div>
-        <p style="font-size:11px;color:var(--text-dim);margin-top:12px;background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;">Tip: Hover-only toolbars now keep delete / edit actions visible as buttons when No Hover is enabled — important on touch devices.</p>
+        <p style="font-size:11px;color:var(--text-dim);margin-top:12px;background:rgba(255,255,255,0.03);padding:8px 10px;border-radius:8px;">Tip: Hover-only toolbars now keep delete / edit actions visible as buttons when No Hover is enabled: important on touch devices.</p>
       </div>
 
       <!-- Reading Support -->
@@ -1384,7 +1398,7 @@ async function renderStudentAccessibility(container) {
           </div>
         </div>
         <div style="margin-top:14px; padding:10px; background:rgba(255,255,255,0.03); border-radius:10px; font-size:11px; color:var(--text-dim); line-height:1.6;">
-          Simplify-on-tap: In AI answers or homework descriptions, tap a difficult word — a small card shows <strong>simple meaning</strong> + optional example. Results are cached and respect your language.
+          Simplify-on-tap: In AI answers or homework descriptions, tap a difficult word: a small card shows <strong>simple meaning</strong> + optional example. Results are cached and respect your language.
         </div>
       </div>
 
@@ -1595,8 +1609,8 @@ async function renderStudentAccessibility(container) {
       applyAccessibilityPrefs(prefs);
       syncUI();
       window._accessPrefsCache = prefs;
-      if (key === 'readingRuler' && prefs[key]) showToast('Reading ruler enabled — move your cursor to follow', 'info');
-      if (key === 'autoReadNewContent' && prefs[key]) showToast('Auto-read enabled — new homework/AI content will be read aloud', 'info');
+      if (key === 'readingRuler' && prefs[key]) showToast('Reading ruler enabled: move your cursor to follow', 'info');
+      if (key === 'autoReadNewContent' && prefs[key]) showToast('Auto-read enabled: new homework/AI content will be read aloud', 'info');
     });
   };
   bindToggle('toggle-high-contrast', 'highContrast');
@@ -1630,7 +1644,7 @@ async function renderStudentAccessibility(container) {
       applyAccessibilityPrefs(prefs);
       syncUI();
       window._accessPrefsCache = prefs;
-      showToast(`Applied ${preset} preset — customize further as needed`, 'success');
+      showToast(`Applied ${preset} preset: customize further as needed`, 'success');
       // Re-render to show updated UI properly for text size etc. but keep without losing?
       // Sync is enough, but also highlight active preset card
       container.querySelectorAll('[data-preset]').forEach(c => c.classList.remove('active'));
@@ -1676,7 +1690,7 @@ async function renderStudentAccessibility(container) {
     }
     if (notes.length) {
       extCard.innerHTML = `
-        <div class="glass-card" style="border-left: 3px solid #93C5FD;">
+        <div class="glass-card status-tab is-info">
           <div class="card-label">⏱ Extended Time</div>
           ${notes.map(n => `
             <div style="background: rgba(79,140,255,0.08); border:1px solid rgba(79,140,255,0.2); border-radius:12px; padding:14px; margin-bottom:10px;">
@@ -1740,7 +1754,7 @@ async function renderStudentAccessibility(container) {
       if(hint){
         if(!gsGrade) hint.textContent = 'Select your grade to see your personalized subjects.';
         else if(showStream && !gsStream) hint.textContent = 'Now select your stream for grades 11–12.';
-        else hint.textContent = 'Grade ' + gsGrade + (gsStream ? ' · ' + gsStream : '') + ' — subjects will update everywhere.';
+        else hint.textContent = 'Grade ' + gsGrade + (gsStream ? ' · ' + gsStream : '') + ': subjects will update everywhere.';
       }
       // Preview merged subjects (taxonomy ∪ enrolled)
       var preview = container.querySelector('#gs-subjects-preview');
@@ -1755,7 +1769,7 @@ async function renderStudentAccessibility(container) {
           } else {
             var enrolledPreview = [];
             // If we have cached subjects, show merged immediately; async will update
-            preview.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">Your subjects: ' + (tax.length ? tax.join(', ') : '—') + '</div><div style="font-size:11px;color:var(--text-dim);">Including any extra subjects from your real enrolled classes (deduped).</div>';
+            preview.innerHTML = '<div style="font-weight:600;margin-bottom:6px;">Your subjects: ' + (tax.length ? tax.join(', ') : ',') + '</div><div style="font-size:11px;color:var(--text-dim);">Including any extra subjects from your real enrolled classes (deduped).</div>';
             if(classIds.length && typeof fetchEnrolledSubjects==='function'){
               fetchEnrolledSubjects(uid, classIds).then(function(enrolled){
                 var merged = (typeof getMergedSubjects==='function') ? getMergedSubjects(gsGrade, gsStream, enrolled) : [].concat(tax, enrolled);
@@ -1821,7 +1835,7 @@ async function renderStudentAccessibility(container) {
   });
   container.querySelector('#btn-reset-access')?.addEventListener('click', () => {
     openModal(_i18n_t('accessibility.confirmReset','Reset Accessibility Settings?'), `
-      <p style="font-size:13px;line-height:1.6;">This will restore all accessibility preferences to defaults. This only affects accessibility settings — not your profile, language, or school data.</p>
+      <p style="font-size:13px;line-height:1.6;">This will restore all accessibility preferences to defaults. This only affects accessibility settings: not your profile, language, or school data.</p>
       <p style="font-size:12px;color:var(--text-dim);margin-top:10px;">You can still customize each setting again after reset.</p>
     `, async (overlay, close) => {
       prefs = { ...ACCESSIBILITY_DEFAULTS };

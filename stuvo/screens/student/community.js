@@ -177,8 +177,11 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
             }
         });
 
-        container.querySelectorAll('.comment-form').forEach(form => {
-            form.addEventListener('submit', async (e) => {
+        // Brief staggered entrance for feed posts. Runs once per mount so likes
+        // and new comments do not replay the animation. Posts stay tappable.
+        try { if (typeof stageListEnter === 'function') stageListEnter(container, '[id^="post-"]'); } catch {}
+
+        container.querySelectorAll('.comment-form').forEach(form => {            form.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const postId = form.dataset.post;
                 const input = form.querySelector('input');

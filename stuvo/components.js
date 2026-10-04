@@ -121,12 +121,14 @@ function initTabs(container) {
 }
 
 // ─── Modal ────────────────────────────────────────────────────
+// Purpose: spatial consistency. Centered enter from scale(0.95) plus opacity.
+// Exit is faster than entrance. Uses CSS transitions so rapid retrigger retargets.
 function openModal(title, bodyHTML, onSubmit = null) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'modal-overlay';
     overlay.innerHTML = `
-        <div class="modal" id="modal-box">
+        <div class="modal" id="modal-box" data-mounted="false">
             <div class="modal-header">
                 <div class="modal-title">${title}</div>
                 <button class="modal-close" id="modal-close-btn">✕</button>
@@ -140,10 +142,29 @@ function openModal(title, bodyHTML, onSubmit = null) {
         </div>
     `;
     document.body.appendChild(overlay);
+    const box = overlay.querySelector('#modal-box');
 
-    const close = () => overlay.remove();
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // Mounted flag dance without frameworks: append hidden, then flip the flag
+    // on the next frame so the CSS transition runs from the entry state.
+    if (reduceMotion) {
+        box.dataset.mounted = 'true';
+    } else {
+        requestAnimationFrame(() => requestAnimationFrame(() => { box.dataset.mounted = 'true'; }));
+    }
+
+    let closed = false;
+    const close = () => {
+        if (closed) return;
+        closed = true;
+        if (reduceMotion) { overlay.remove(); return; }
+        overlay.dataset.closing = 'true';
+        window.setTimeout(() => overlay.remove(), 160);
+    };
     overlay.querySelector('#modal-close-btn').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    const onKey = e => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
 
     if (onSubmit) {
         overlay.querySelector('#modal-submit-btn').addEventListener('click', () => {
@@ -155,6 +176,8 @@ function openModal(title, bodyHTML, onSubmit = null) {
 }
 
 // ─── Toast ────────────────────────────────────────────────────
+// Purpose: prevent jarring pop-in. Same-edge enter and exit, calm ease.
+// CSS transitions retarget smoothly when toasts stack or replace each other.
 function showToast(message, type = 'success') {
     let container = document.getElementById('toast-container');
     if (!container) {
@@ -163,11 +186,48 @@ function showToast(message, type = 'success') {
         document.body.appendChild(container);
     }
     while (container.children.length >= 3) container.removeChild(container.firstChild);
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
+    toast.setAttribute('role', 'status');
+    if (!reduceMotion) toast.dataset.mounted = 'false';
     container.appendChild(toast);
-    setTimeout(() => toast.remove(), 3000);
+    if (!reduceMotion) {
+        requestAnimationFrame(() => requestAnimationFrame(() => { toast.dataset.mounted = 'true'; }));
+    }
+    window.setTimeout(() => {
+        if (reduceMotion) { toast.remove(); return; }
+        toast.dataset.leaving = 'true';
+        window.setTimeout(() => toast.remove(), 340);
+    }, 3000);
+}
+
+// ─── List stagger ─────────────────────────────────────────────
+// Purpose: prevent jarring pop-in when a list renders many items at once.
+// Each item fades and slides in 50ms after the previous one. Items stay
+// tappable mid-animation, and only the first screenful staggers.
+function stageListEnter(scope, selector, maxItems = 12) {
+    if (!scope || !scope.querySelectorAll) return;
+    if (scope.dataset && scope.dataset.staggered === '1') return;
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) return;
+    const items = scope.querySelectorAll(selector);
+    const n = Math.min(items.length, maxItems);
+    if (!n) return;
+    for (let i = 0; i < n; i++) {
+        items[i].classList.add('list-enter');
+        items[i].style.setProperty('--stagger-index', String(i));
+    }
+    let flipped = false;
+    const flip = () => {
+        if (flipped) return;
+        flipped = true;
+        for (let i = 0; i < n; i++) { if (items[i].isConnected) items[i].dataset.mounted = 'true'; }
+    };
+    requestAnimationFrame(() => requestAnimationFrame(flip));
+    window.setTimeout(flip, 150);
+    try { scope.dataset.staggered = '1'; } catch {}
 }
 
 // ─── Badge ────────────────────────────────────────────────────
@@ -252,13 +312,17 @@ function ensureNotificationStyles() {
             backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
             display: flex; align-items: center; justify-content: center;
             cursor: pointer; font-size: 18px;
+            transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease;
         }
+        .notification-bell-btn:active { transform: scale(var(--press-scale)); }
+        @media (hover: hover) and (pointer: fine) {
         .notification-bell-btn:hover { background: rgba(255,255,255,0.08); }
+        }
         .notification-badge {
             position: absolute; top: -4px; right: -4px;
             min-width: 18px; height: 18px; padding: 0 5px;
             border-radius: 10px; background: linear-gradient(135deg,#EF4444,#F59E0B);
-            color: #fff; font-size: 11px; font-weight: 700;
+            color: var(--text-bright); font-size: 11px; font-weight: 700;
             display: flex; align-items: center; justify-content: center;
             border: 1px solid rgba(255,255,255,0.2); line-height: 1;
         }
@@ -269,6 +333,7 @@ function ensureNotificationStyles() {
             background: #111827; border: 1px solid var(--glass-border);
             border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
             z-index: 1000; overflow: hidden; display: flex; flex-direction: column;
+            transform-origin: top right;
         }
         .notification-dropdown.hidden { display: none !important; }
         .notification-header {
@@ -278,18 +343,26 @@ function ensureNotificationStyles() {
         }
         .notification-header button {
             font-size: 12px; font-weight: 600; color: #93C5FD;
-            background: transparent; border: none; cursor: pointer; font-family: 'Inter', sans-serif;
+            background: transparent; border: none; cursor: pointer; font-family: var(--font-ui);
+            transition: color 160ms ease;
         }
+        @media (hover: hover) and (pointer: fine) {
         .notification-header button:hover { color: #C4B5FD; text-decoration: underline; }
+        }
         .notification-list { overflow-y: auto; flex: 1; max-height: 360px; }
         .notification-item {
             display: flex; gap: 12px; padding: 12px 16px;
             border-bottom: 1px solid rgba(255,255,255,0.04);
             cursor: pointer; align-items: flex-start;
+            transition: background-color 160ms ease;
         }
+        @media (hover: hover) and (pointer: fine) {
         .notification-item:hover { background: rgba(255,255,255,0.04); }
+        }
         .notification-item.unread { background: rgba(124,92,252,0.06); }
+        @media (hover: hover) and (pointer: fine) {
         .notification-item.unread:hover { background: rgba(124,92,252,0.10); }
+        }
         .notification-icon {
             width: 36px; height: 36px; border-radius: 10px;
             display: flex; align-items: center; justify-content: center;
@@ -545,7 +618,7 @@ async function checkDeadlineApproachingNotifications(uid, classIds) {
                         await addDoc(collection(db, 'users', uid, 'notifications'), {
                             type: 'deadline_approaching',
                             title: `Deadline approaching: ${hw.title || _i18n_t('nav.homework','Homework')}`,
-                            body: `${hw.subject ? hw.subject + ' — ' : ''}${hw.title || ''} is due on ${hw.deadline}. Submit soon!`,
+                            body: `${hw.subject ? hw.subject + ': ' : ''}${hw.title || ''} is due on ${hw.deadline}. Submit soon!`,
                             relatedClassId: classId,
                             relatedHomeworkId: hwId,
                             read: false,
@@ -784,7 +857,7 @@ async function handleClientFallback(endpoint, payload = {}) {
         const { prompt = '', message = '', conversationHistory = [] } = payload;
         const effectivePrompt = prompt || message || '';
         const reply = await callDirectOpenRouter([
-            { role: 'system', content: 'You are the Stuvo Wellbeing Assistant — a warm, supportive wellbeing companion for students. Empathetic, non-judgmental, encouraging.' },
+            { role: 'system', content: 'You are the Stuvo Wellbeing Assistant: a warm, supportive wellbeing companion for students. Empathetic, non-judgmental, encouraging.' },
             ...conversationHistory.slice(-6),
             { role: 'user', content: effectivePrompt }
         ]);
@@ -839,8 +912,12 @@ function ensureGlobalSearchStyles() {
             backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
             display: flex; align-items: center; justify-content: center;
             cursor: pointer; font-size: 18px;
+            transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease;
         }
+        .global-search-btn:active { transform: scale(var(--press-scale)); }
+        @media (hover: hover) and (pointer: fine) {
         .global-search-btn:hover { background: rgba(255,255,255,0.08); }
+        }
         .global-search-overlay {
             position: fixed; inset: 0;
             background: rgba(0,0,0,0.55);
@@ -889,7 +966,10 @@ function ensureGlobalSearchStyles() {
             display: flex; align-items: center; justify-content: center;
         }
         .global-search-clear.hidden { display: none !important; }
+        .global-search-clear { transition: background-color 160ms ease, color 160ms ease; }
+        @media (hover: hover) and (pointer: fine) {
         .global-search-clear:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+        }
         .global-search-results {
             flex: 1; overflow-y: auto; padding: 16px;
             max-height: 60vh;
@@ -914,8 +994,12 @@ function ensureGlobalSearchStyles() {
             padding: 12px 14px; border-radius: 14px;
             background: var(--glass); border: 1px solid var(--glass-border);
             cursor: pointer; margin-bottom: 8px;
+            transition: transform var(--dur-press) var(--ease-out), background-color 160ms ease, border-color 160ms ease;
         }
+        .gs-item:active { transform: scale(0.99); }
+        @media (hover: hover) and (pointer: fine) {
         .gs-item:hover { background: rgba(124,92,252,0.12); border-color: rgba(124,92,252,0.35); }
+        }
         .gs-item-icon {
             width: 36px; height: 36px; border-radius: 10px;
             display: flex; align-items: center; justify-content: center;
@@ -925,8 +1009,10 @@ function ensureGlobalSearchStyles() {
         .gs-item-main { flex: 1; min-width: 0; }
         .gs-item-title { font-size: 13px; font-weight: 600; color: var(--text); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .gs-item-sub { font-size: 12px; color: var(--text-dim); margin-top: 3px; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .gs-item-arrow { color: var(--text-dim); font-size: 13px; margin-left: auto; flex-shrink: 0; opacity: 0.7; }
+        .gs-item-arrow { color: var(--text-dim); font-size: 13px; margin-left: auto; flex-shrink: 0; opacity: 0.7; transition: color 160ms ease, opacity 160ms ease; }
+        @media (hover: hover) and (pointer: fine) {
         .gs-item:hover .gs-item-arrow { color: #C4B5FD; opacity: 1; }
+        }
         .global-search-hint {
             padding: 12px 16px; border-top: 1px solid var(--glass-border);
             font-size: 11px; color: var(--text-dim); text-align: center;
@@ -1235,7 +1321,7 @@ function renderGlobalSearchResults(grouped, rawQuery, container) {
                             <div class="gs-item-icon">🏫</div>
                             <div class="gs-item-main">
                                 <div class="gs-item-title">${_highlightMatch(c.name || 'Unnamed Class', qLower)}</div>
-                                <div class="gs-item-sub">${_escapeHtml(c.subject || '—')}${c.room ? ' · ' + _escapeHtml(c.room) : ''}</div>
+                                <div class="gs-item-sub">${_escapeHtml(c.subject || ',')}${c.room ? ' · ' + _escapeHtml(c.room) : ''}</div>
                             </div>
                             <div class="gs-item-arrow">→</div>
                         </div>
@@ -1426,7 +1512,7 @@ if (typeof window !== 'undefined') {
     window.closeGlobalSearch = closeGlobalSearch;
 }
 
-// ─── D.5 Offline-Friendly Experience — offline banner ─────────
+// ─── D.5 Offline-Friendly Experience: offline banner ─────────
 (function initOfflineBanner() {
     function ensureOfflineBannerStyles() {
         if (document.getElementById('offline-banner-styles')) return;
@@ -1436,7 +1522,7 @@ if (typeof window !== 'undefined') {
             #offline-banner {
                 position: fixed; top: 0; left: 0; right: 0;
                 background: linear-gradient(135deg, #F59E0B, #EF4444);
-                color: #fff; text-align: center; font-size: 13px; font-weight: 600;
+                color: var(--text-bright); text-align: center; font-size: 13px; font-weight: 600;
                 padding: 10px 16px; z-index: 9999; display: none;
                 box-shadow: 0 2px 12px rgba(0,0,0,0.3);
                 font-family: 'Inter', sans-serif; letter-spacing: 0.02em;
@@ -1454,7 +1540,7 @@ if (typeof window !== 'undefined') {
         banner.id = 'offline-banner';
         banner.setAttribute('role', 'status');
         banner.setAttribute('aria-live', 'polite');
-        banner.textContent = "You're offline — showing previously loaded content";
+        banner.textContent = "You're offline: showing previously loaded content";
         banner.style.display = 'none';
         if (document.body) document.body.prepend(banner);
         else document.addEventListener('DOMContentLoaded', () => {

@@ -96,7 +96,7 @@ async function renderTeacherClasses(container) {
                                     <div class="card-header" style="margin-bottom:14px;">
                                         <div>
                                             <div style="font-family:'Sora',sans-serif;font-size:20px;font-weight:800;color:#C4B5FD;">${c.name || _i18n_t('teacher.unnamedClass','Unnamed Class')}</div>
-                                            <div class="hw-sub">${c.subject || '—'}</div>
+                                            <div class="hw-sub">${c.subject || ','}</div>
                                         </div>
                                         ${createBadge(c.room || _i18n_t('teacher.noRoom','No room'), 'blue')}
                                     </div>
@@ -107,7 +107,7 @@ async function renderTeacherClasses(container) {
                                     </div>
                                     <div style="display:flex;justify-content:space-between;font-size:13px;">
                                         <span style="color:var(--text-dim);">🗓 _i18n_t('teacher.scheduleLabel2','Schedule')</span>
-                                        <span style="font-weight:600;">${c.schedule || '—'}</span>
+                                        <span style="font-weight:600;">${c.schedule || ','}</span>
                                     </div>
                                 </div>
                             </a>
@@ -125,10 +125,10 @@ async function renderTeacherClasses(container) {
                                 ${classes.map(c => `
                                     <tr>
                                         <td><span style="font-weight:600;">${c.name || _i18n_t('teacher.unnamedClass','Unnamed Class')}</span></td>
-                                        <td>${c.subject || '—'}</td>
+                                        <td>${c.subject || ','}</td>
                                         <td>${(c.studentIds || []).length}</td>
-                                        <td style="color:#6EE7B7;">${c._present === null ? '—' : `${c._present}/${(c.studentIds || []).length}`}</td>
-                                        <td>${c._avgPct === null ? '—' : `${c._avgPct}%`}</td>
+                                        <td style="color:#6EE7B7;">${c._present === null ? ',' : `${c._present}/${(c.studentIds || []).length}`}</td>
+                                        <td>${c._avgPct === null ? ',' : `${c._avgPct}%`}</td>
                                     </tr>
                                 `).join('')}
                             </tbody>

@@ -32,7 +32,7 @@ function renderLogin(container) {
             <div style="position:relative;z-index:1;width:100%;max-width:440px;padding:20px;">
                 <div style="text-align:center;margin-bottom:32px;">
                     <div style="font-family:'Sora',sans-serif;font-weight:800;font-size:42px;
-                        background:linear-gradient(135deg,#fff 30%,#4F8CFF);
+                        background:linear-gradient(135deg,#F4F2FF 30%,#4F8CFF);
                         -webkit-background-clip:text;background-clip:text;color:transparent;
                         letter-spacing:-1.5px;margin-bottom:8px;">Stuvo</div>
                     <p style="color:var(--text-dim);font-size:14px;letter-spacing:0.02em;">

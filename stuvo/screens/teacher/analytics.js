@@ -56,14 +56,14 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
             // simple: group by subject
             html += `
                 <div class="glass-card">
-                    <div class="card-label">${cls.name || _i18n_t('testReports.class','Class')} — ${_i18n_t('nav.analytics','Analytics')}</div>
+                    <div class="card-label">${cls.name || _i18n_t('testReports.class','Class')}: ${_i18n_t('nav.analytics','Analytics')}</div>
                     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;">
                         <div style="text-align:center;"><div style="font-size:22px;font-weight:700;color:#C4B5FD;">${completionPct}%</div><div style="font-size:11px;color:var(--text-dim);">${_i18n_t('teacher.completionLabel','Completion')}</div></div>
                         <div style="text-align:center;"><div style="font-size:22px;font-weight:700;color:#93C5FD;">${onTime}/${late+onTime+missing}</div><div style="font-size:11px;color:var(--text-dim);">${_i18n_t('teacher.onTimeLate','On-time / Late')}</div></div>
                         <div style="text-align:center;"><div style="font-size:22px;font-weight:700;color:#FDE68A;">${avgScore}%</div><div style="font-size:11px;color:var(--text-dim);">${_i18n_t('teacher.avgQuiz','Avg Quiz')}</div></div>
                     </div>
                     <div style="height:8px;background:rgba(255,255,255,0.06);border-radius:6px;overflow:hidden;margin-bottom:12px;"><div style="height:100%;width:${completionPct}%;background:linear-gradient(90deg,#7C5CFC,#4F8CFF);"></div></div>
-                    <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${_i18n_t('teacher.notSubmitted','Students who haven\'t submitted')} — ${notSubmitters.length ? '' : _i18n_t('teacher.allCaughtUpShort','All caught up!')}</div>
+                    <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${_i18n_t('teacher.notSubmitted','Students who haven\'t submitted')}: ${notSubmitters.length ? '' : _i18n_t('teacher.allCaughtUpShort','All caught up!')}</div>
                     ${notSubmitters.slice(0,5).map(n => `
                         <div class="hw-item">
                             <div><div class="hw-title">${n.studentId.slice(0,8)}</div><div class="hw-sub">${n.hwTitle}</div></div>
@@ -107,7 +107,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                     await addDoc(collection(db, 'users', sid, 'notifications'), {
                         type: 'ai_reminder',
                         titleKey: 'notifications.reminderTitle', title: 'Reminder: Homework pending',
-                        bodyKey: 'notifications.reminderBody', body: 'You have a pending assignment — please submit soon.',
+                        bodyKey: 'notifications.reminderBody', body: 'You have a pending assignment: please submit soon.',
                         relatedClassId: cid, relatedHomeworkId: hwId, read: false, createdAt: serverTimestamp()
                     });
                     showToast(_i18n_t('teacher.reminderSent','Reminder sent'),'success');

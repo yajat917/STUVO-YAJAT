@@ -11,7 +11,7 @@ async function renderStudentWellbeingAssistant(container) {
   // Distinct branding
   container.innerHTML = `
     <div class="flex-col" style="max-width: 760px; margin: 0 auto;">
-      ${createPageHeader(_i18n_t('wellbeing.wellbeingAssistant','Stuvo Wellbeing Assistant'), 'A supportive space to reflect — not a counselor, not a diagnosis. If you need urgent help, reach a trusted adult right away.')}
+      ${createPageHeader(_i18n_t('wellbeing.wellbeingAssistant','Stuvo Wellbeing Assistant'), 'A supportive space to reflect: not a counselor, not a diagnosis. If you need urgent help, reach a trusted adult right away.')}
       <div class="glass-card" style="padding: 0; overflow:hidden; display:flex; flex-direction:column; height: 68vh; min-height: 420px; max-height: 720px;">
         <div style="padding: 14px 16px; border-bottom: 1px solid var(--glass-border); display:flex; align-items:center; gap:10px; background: linear-gradient(135deg, rgba(124,92,252,0.12), rgba(79,140,255,0.08));">
           <div style="width:36px; height:36px; border-radius:50%; background: linear-gradient(135deg,#7C5CFC,#4F8CFF); display:flex; align-items:center; justify-content:center; font-size:16px;">🌿</div>
@@ -27,7 +27,7 @@ async function renderStudentWellbeingAssistant(container) {
 
         <div id="wb-chat-thread" style="flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px; background: rgba(0,0,0,0.12);">
           <div style="align-self:center; text-align:center; max-width: 520px; background: rgba(124,92,252,0.08); border:1px solid rgba(124,92,252,0.15); border-radius:14px; padding:14px;">
-            <div style="font-size:13px; font-weight:600;">Hi ${userName} — I'm the Stuvo Wellbeing Assistant 🌿</div>
+            <div style="font-size:13px; font-weight:600;">Hi ${userName}: I'm the Stuvo Wellbeing Assistant 🌿</div>
             <div style="font-size:12px; color: var(--text-dim); line-height:1.6; margin-top:6px;">I'm here to help you think through stress, focus, sleep or study worries with practical, gentle ideas. I'm not a counselor or medical professional, and I don't diagnose. If you're feeling unsafe or need urgent help, please reach out to a trusted adult, school counselor, or local helpline right away.</div>
             <div style="display:flex; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:12px;">
               <button class="badge badge-violet" data-suggest="I'm feeling stressed about exams" style="cursor:pointer;">I'm feeling stressed</button>
@@ -40,7 +40,7 @@ async function renderStudentWellbeingAssistant(container) {
 
         <div id="wb-escalation-banner" style="display:none; background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(245,158,11,0.15)); border-top:1px solid rgba(239,68,68,0.3); padding:10px 14px; font-size:12px; line-height:1.6;">
           <div style="font-weight:700; color:#FCA5A5;">If you need urgent support, please reach out right now:</div>
-          <div style="color: var(--text-dim);">Contact a trusted adult, school counselor, or a local helpline. If you are in immediate danger, please contact emergency services in your area. You don't have to face this alone — talking to someone you trust can help.</div>
+          <div style="color: var(--text-dim);">Contact a trusted adult, school counselor, or a local helpline. If you are in immediate danger, please contact emergency services in your area. You don't have to face this alone: talking to someone you trust can help.</div>
           <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
             <a href="#/student/report" class="btn btn-secondary btn-sm" style="margin-top:0; width:auto;">Report a concern</a>
             <a href="#/student/wellbeing" class="btn btn-secondary btn-sm" style="margin-top:0; width:auto;">Wellbeing home</a>
@@ -55,7 +55,7 @@ async function renderStudentWellbeingAssistant(container) {
 
       <div class="glass-card">
         <div style="font-size:12px; font-weight:700; color: var(--text-dim); text-transform: uppercase; letter-spacing:0.06em; margin-bottom:8px;">Your privacy</div>
-        <p style="font-size:12px; color: var(--text-dim); line-height:1.6;">Chats are saved privately under <code>users/{uid}/wellbeingChats/{chatId}</code> with an escalation flag if needed. They are not shared with teachers or other students. If an escalation is detected, a school admin may be notified so they can offer help — you'll see a note when this happens.</p>
+        <p style="font-size:12px; color: var(--text-dim); line-height:1.6;">Chats are saved privately under <code>users/{uid}/wellbeingChats/{chatId}</code> with an escalation flag if needed. They are not shared with teachers or other students. If an escalation is detected, a school admin may be notified so they can offer help: you'll see a note when this happens.</p>
         <div id="wb-history" style="margin-top:12px;">
           <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Recent wellbeing chats</div>
           <div id="wb-history-list" style="display:flex; flex-direction:column; gap:8px; min-height:24px;">

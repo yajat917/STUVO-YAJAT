@@ -7,7 +7,7 @@ async function renderStudentTestReports(container) {
 
     container.innerHTML = `
         <div class="flex-col">
-            ${createPageHeader(_i18n_t('nav.testReports','Test Reports'), _i18n_t('timetable.subtitle','Read-only — managed by your teachers'))}
+            ${createPageHeader(_i18n_t('nav.testReports','Test Reports'), _i18n_t('timetable.subtitle','Read-only: managed by your teachers'))}
             ${createSkeleton(3)}
         </div>
     `;
@@ -53,7 +53,7 @@ async function renderStudentTestReports(container) {
 
         container.innerHTML = `
             <div class="flex-col">
-                ${createPageHeader(_i18n_t('nav.testReports','Test Reports'), _i18n_t('timetable.subtitle','Read-only — managed by your teachers'))}
+                ${createPageHeader(_i18n_t('nav.testReports','Test Reports'), _i18n_t('timetable.subtitle','Read-only: managed by your teachers'))}
 
                 <div class="grid-cols-3">
                     ${createGlassCard('', `<div class="stat-num" style="color:#C4B5FD;">${filtered.length}</div><div class="stat-label">${_i18n_t('testReports.testsTaken','Tests Taken')}</div>`, '', 0.05)}
@@ -73,11 +73,11 @@ async function renderStudentTestReports(container) {
                         : createTable(
                             [_i18n_t('studyHub.subject','Subject'), _i18n_t('testReports.testName','Test Name'), 'Score', 'Grade', _i18n_t('testReports.date','Date'), _i18n_t('testReports.class','Class')],
                             filtered.map(r => [
-                                _escapeHtml(r.subject) || '—',
-                                _escapeHtml(r.testName) || '—',
+                                _escapeHtml(r.subject) || ',',
+                                _escapeHtml(r.testName) || ',',
                                 `<span style="font-weight:600;">${r.marks}/${r.maxMarks}</span>
                                  <span style="color:var(--text-dim);font-size:11px;"> (${pct(r)}%)</span>`,
-                                createBadge(r.grade || '—', GRADE_COLOR[r.grade] || 'gray'),
+                                createBadge(r.grade || ',', GRADE_COLOR[r.grade] || 'gray'),
                                 fmtDate(r),
                                 _escapeHtml(r.className) || ''
                             ])

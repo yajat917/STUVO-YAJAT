@@ -64,37 +64,37 @@ const roleHome = {
 // SPA has a single <head>; update document.title + meta[name=description]
 // on every navigation. Format: `[Page Name] — Stuvo`, <160 chars, unique.
 const ROUTE_META = {
-    '#/login':                 { title: 'Sign In — Stuvo',               desc: 'Sign in to Stuvo with Google to access your school dashboard.' },
-    '#/pending':               { title: 'Pending Approval — Stuvo',      desc: 'Your teacher account is pending admin approval on Stuvo.' },
-    '#/student/dashboard':     { title: 'Dashboard — Stuvo',             desc: 'Student dashboard: streak, focus plan, homework and practice at a glance.' },
-    '#/student/attendance':    { title: 'Attendance — Stuvo',            desc: 'View your attendance calendar and monthly attendance stats.' },
-    '#/student/homework':      { title: 'Homework — Stuvo',              desc: 'See assigned homework, submit answers and track quiz submissions.' },
-    '#/student/test-reports':  { title: 'Test Reports — Stuvo',          desc: 'Review your test marks, subject trends and teacher feedback.' },
-    '#/student/timetable':     { title: 'Timetable — Stuvo',             desc: 'Your weekly class timetable, day by day, on Stuvo.' },
-    '#/student/study-hub':     { title: 'Study Hub — Stuvo',             desc: 'AI study hub: doubts, revision notes, quizzes and weekly plans.' },
-    '#/student/practice-bits': { title: 'Practice Bits — Stuvo',         desc: 'Daily bite-size AI practice questions to build your streak.' },
-    '#/student/community':     { title: 'Community — Stuvo',             desc: 'School community feed: posts, announcements and discussions.' },
-    '#/student/wellbeing':     { title: 'Wellbeing — Stuvo',             desc: 'Check in with your mood, breathing breaks and private journal.' },
-    '#/student/accessibility': { title: 'Accessibility — Stuvo',         desc: 'Adjust text size, contrast, speech and focus settings on Stuvo.' },
-    '#/student/report':        { title: 'Report a Concern — Stuvo',      desc: 'Privately report a concern to a school admin on Stuvo.' },
-    '#/student/wellbeingAssistant': { title: 'Wellbeing Assistant — Stuvo', desc: 'Private reflective chat with the Stuvo wellbeing assistant.' },
-    '#/student/doubt':         { title: 'Ask AI — Stuvo',                desc: 'Ask study doubts and get step-by-step AI explanations.' },
-    '#/student/focus':         { title: 'Focus Mode — Stuvo',            desc: 'Start a focus timer session and earn XP on Stuvo.' },
-    '#/student/revision':      { title: 'Revision — Stuvo',              desc: 'Generate revision notes and checklists for any chapter.' },
-    '#/student/studyhub':      { title: 'Study Hub — Stuvo',             desc: 'AI study hub: doubts, revision notes, quizzes and weekly plans.' },
-    '#/teacher/dashboard':     { title: 'Teacher Dashboard — Stuvo',     desc: 'Teacher overview: classes, homework activity and class pulse.' },
-    '#/teacher/classes':       { title: 'Classes — Stuvo',               desc: 'Manage your classes, rosters and create new classes.' },
-    '#/teacher/class-detail':  { title: 'Class Detail — Stuvo',          desc: 'Class roster, announcements and student management.' },
-    '#/teacher/attendance':    { title: 'Mark Attendance — Stuvo',       desc: 'Mark and save daily attendance for your classes.' },
-    '#/teacher/homework':      { title: 'Homework Manager — Stuvo',      desc: 'Publish assignments and AI quizzes to your classes.' },
-    '#/teacher/test-reports':  { title: 'Test Reports Manager — Stuvo',  desc: 'Publish student marks and review class performance.' },
-    '#/teacher/timetable':     { title: 'Timetable Manager — Stuvo',     desc: 'Build and edit weekly timetables for your classes.' },
-    '#/admin/dashboard':       { title: 'Admin Dashboard — Stuvo',       desc: 'Admin overview: users, approvals and moderation stats.' },
-    '#/admin/teacher-approvals': { title: 'Teacher Approvals — Stuvo',   desc: 'Approve or reject teacher accounts awaiting access.' },
-    '#/admin/users':           { title: 'User Management — Stuvo',       desc: 'Search and review all students, teachers and admins.' },
-    '#/admin/moderation':      { title: 'Moderation Queue — Stuvo',      desc: 'Review reported content, wellness flags and support requests.' },
-    '#/admin/moderationQueue': { title: 'Moderation Queue — Stuvo',      desc: 'Review reported content, wellness flags and support requests.' },
-    '#/404':                   { title: 'Page Not Found — Stuvo',        desc: 'The page you requested was not found. Return to your Stuvo dashboard.' },
+    '#/login':                 { title: 'Sign In: Stuvo',               desc: 'Sign in to Stuvo with Google to access your school dashboard.' },
+    '#/pending':               { title: 'Pending Approval: Stuvo',      desc: 'Your teacher account is pending admin approval on Stuvo.' },
+    '#/student/dashboard':     { title: 'Dashboard: Stuvo',             desc: 'Student dashboard: streak, focus plan, homework and practice at a glance.' },
+    '#/student/attendance':    { title: 'Attendance: Stuvo',            desc: 'View your attendance calendar and monthly attendance stats.' },
+    '#/student/homework':      { title: 'Homework: Stuvo',              desc: 'See assigned homework, submit answers and track quiz submissions.' },
+    '#/student/test-reports':  { title: 'Test Reports: Stuvo',          desc: 'Review your test marks, subject trends and teacher feedback.' },
+    '#/student/timetable':     { title: 'Timetable: Stuvo',             desc: 'Your weekly class timetable, day by day, on Stuvo.' },
+    '#/student/study-hub':     { title: 'Study Hub: Stuvo',             desc: 'AI study hub: doubts, revision notes, quizzes and weekly plans.' },
+    '#/student/practice-bits': { title: 'Practice Bits: Stuvo',         desc: 'Daily bite-size AI practice questions to build your streak.' },
+    '#/student/community':     { title: 'Community: Stuvo',             desc: 'School community feed: posts, announcements and discussions.' },
+    '#/student/wellbeing':     { title: 'Wellbeing: Stuvo',             desc: 'Check in with your mood, breathing breaks and private journal.' },
+    '#/student/accessibility': { title: 'Accessibility: Stuvo',         desc: 'Adjust text size, contrast, speech and focus settings on Stuvo.' },
+    '#/student/report':        { title: 'Report a Concern: Stuvo',      desc: 'Privately report a concern to a school admin on Stuvo.' },
+    '#/student/wellbeingAssistant': { title: 'Wellbeing Assistant: Stuvo', desc: 'Private reflective chat with the Stuvo wellbeing assistant.' },
+    '#/student/doubt':         { title: 'Ask AI: Stuvo',                desc: 'Ask study doubts and get step-by-step AI explanations.' },
+    '#/student/focus':         { title: 'Focus Mode: Stuvo',            desc: 'Start a focus timer session and earn XP on Stuvo.' },
+    '#/student/revision':      { title: 'Revision: Stuvo',              desc: 'Generate revision notes and checklists for any chapter.' },
+    '#/student/studyhub':      { title: 'Study Hub: Stuvo',             desc: 'AI study hub: doubts, revision notes, quizzes and weekly plans.' },
+    '#/teacher/dashboard':     { title: 'Teacher Dashboard: Stuvo',     desc: 'Teacher overview: classes, homework activity and class pulse.' },
+    '#/teacher/classes':       { title: 'Classes: Stuvo',               desc: 'Manage your classes, rosters and create new classes.' },
+    '#/teacher/class-detail':  { title: 'Class Detail: Stuvo',          desc: 'Class roster, announcements and student management.' },
+    '#/teacher/attendance':    { title: 'Mark Attendance: Stuvo',       desc: 'Mark and save daily attendance for your classes.' },
+    '#/teacher/homework':      { title: 'Homework Manager: Stuvo',      desc: 'Publish assignments and AI quizzes to your classes.' },
+    '#/teacher/test-reports':  { title: 'Test Reports Manager: Stuvo',  desc: 'Publish student marks and review class performance.' },
+    '#/teacher/timetable':     { title: 'Timetable Manager: Stuvo',     desc: 'Build and edit weekly timetables for your classes.' },
+    '#/admin/dashboard':       { title: 'Admin Dashboard: Stuvo',       desc: 'Admin overview: users, approvals and moderation stats.' },
+    '#/admin/teacher-approvals': { title: 'Teacher Approvals: Stuvo',   desc: 'Approve or reject teacher accounts awaiting access.' },
+    '#/admin/users':           { title: 'User Management: Stuvo',       desc: 'Search and review all students, teachers and admins.' },
+    '#/admin/moderation':      { title: 'Moderation Queue: Stuvo',      desc: 'Review reported content, wellness flags and support requests.' },
+    '#/admin/moderationQueue': { title: 'Moderation Queue: Stuvo',      desc: 'Review reported content, wellness flags and support requests.' },
+    '#/404':                   { title: 'Page Not Found: Stuvo',        desc: 'The page you requested was not found. Return to your Stuvo dashboard.' },
 };
 
 function updateDocumentHead(path) {
@@ -369,13 +369,22 @@ function updateTopbar() {
                 const s = document.createElement('style');
                 s.id = 'lang-switcher-styles';
                 s.textContent = `
-                    .lang-switcher-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:20px;background:var(--glass);border:1px solid var(--glass-border);backdrop-filter:blur(12px);color:var(--text);font-family:'Inter',sans-serif;font-size:12px;font-weight:600;cursor:pointer;}
+                    .lang-switcher-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:20px;background:var(--glass);border:1px solid var(--glass-border);backdrop-filter:blur(12px);color:var(--text);font-family:var(--font-ui);font-size:12px;font-weight:600;cursor:pointer;transition:transform var(--dur-press) var(--ease-out),background-color 160ms ease;}
+                    .lang-switcher-btn:active{transform:scale(var(--press-scale));}
+                    @media (hover: hover) and (pointer: fine){
                     .lang-switcher-btn:hover{background:rgba(255,255,255,0.08);}
+                    }
                     .lang-dropdown.hidden{display:none !important;}
+                    .lang-dropdown{transform-origin:top right;}
+                    @media (hover: hover) and (pointer: fine){
                     .lang-option:hover{background:rgba(124,92,252,0.08) !important;}
+                    }
                     .lang-option.active{color:#C4B5FD !important;}
-                    .mth-accessibility-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);font-size:14px;cursor:pointer;}
+                    .mth-accessibility-btn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.06);border:1px solid var(--glass-border);color:var(--text);font-size:14px;cursor:pointer;transition:transform var(--dur-press) var(--ease-out),background-color 160ms ease,border-color 160ms ease;}
+                    .mth-accessibility-btn:active{transform:scale(var(--press-scale));}
+                    @media (hover: hover) and (pointer: fine){
                     .mth-accessibility-btn:hover{background:rgba(124,92,252,0.15);border-color:rgba(124,92,252,0.35);}
+                    }
                     @media (max-width: 768px){ .mth-accessibility-btn{width:28px;height:28px;font-size:13px;} }
                 `;
                 document.head.appendChild(s);
@@ -765,7 +774,9 @@ function openHamburger() {
   `;
   drawer.classList.remove('hidden');
   overlay.classList.remove('hidden');
-  requestAnimationFrame(() => { drawer.classList.add('open'); });
+  // Purpose: spatial consistency. Double rAF guarantees the drawer paints at
+  // translateX(-105%) before .open flips, so the slide runs instead of jumping.
+  requestAnimationFrame(() => requestAnimationFrame(() => { drawer.classList.add('open'); }));
   if (ham) ham.setAttribute('aria-expanded', 'true');
   drawer.querySelectorAll('[data-ham-link]').forEach(a => {
     a.addEventListener('click', () => closeHamburger());
@@ -786,10 +797,16 @@ function closeHamburger() {
   const overlay = document.getElementById('hamburger-overlay');
   const ham = document.getElementById('mth-hamburger');
   if (!drawer || !overlay) return;
+  // Purpose: exits run faster than entrances. Honor the 150ms close slide,
+  // then hide. Reduced motion hides instantly with no slide.
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   drawer.classList.remove('open');
-  drawer.classList.add('hidden');
   overlay.classList.add('hidden');
   if (ham) ham.setAttribute('aria-expanded', 'false');
+  if (reduceMotion || drawer.classList.contains('hidden')) { drawer.classList.add('hidden'); return; }
+  window.setTimeout(() => {
+    if (!drawer.classList.contains('open')) drawer.classList.add('hidden');
+  }, 160);
 }
 // Outside-tap closes hamburger (bound once)
 (function initHamburgerOutsideTap() {
@@ -910,7 +927,7 @@ initMobileNav();
     const style = document.createElement('style');
     style.id = 'offline-banner-styles';
     style.textContent = `
-      #offline-banner { position: fixed; top: 0; left: 0; right: 0; background: linear-gradient(135deg, #F59E0B, #EF4444); color: #fff; text-align: center; font-size: 13px; font-weight: 600; padding: 10px 16px; z-index: 9999; display: none; box-shadow: 0 2px 12px rgba(0,0,0,0.3); font-family: 'Inter', sans-serif; }
+      #offline-banner { position: fixed; top: 0; left: 0; right: 0; background: linear-gradient(135deg, #F59E0B, #EF4444); color: var(--text-bright); text-align: center; font-size: 13px; font-weight: 600; padding: 10px 16px; z-index: 9999; display: none; box-shadow: 0 2px 12px rgba(0,0,0,0.3); font-family: var(--font-ui); }
       #offline-banner.show { display: block !important; }
     `;
     document.head.appendChild(style);
@@ -923,7 +940,7 @@ initMobileNav();
     banner.id = 'offline-banner';
     banner.setAttribute('role', 'status');
     banner.setAttribute('aria-live', 'polite');
-    banner.textContent = "You're offline — showing previously loaded content";
+    banner.textContent = "You're offline: showing previously loaded content";
     banner.style.display = 'none';
     if (document.body) document.body.prepend(banner);
     else document.addEventListener('DOMContentLoaded', () => { if (!document.getElementById('offline-banner')) document.body.prepend(banner); });

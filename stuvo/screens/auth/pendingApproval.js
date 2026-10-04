@@ -3,7 +3,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
     container.innerHTML = `
         <div style="max-width:460px;text-align:center;padding:20px;">
             <div style="font-family:'Sora',sans-serif;font-weight:800;font-size:28px;
-                background:linear-gradient(135deg,#fff,#4F8CFF);-webkit-background-clip:text;
+                background:linear-gradient(135deg,#F4F2FF,#4F8CFF);-webkit-background-clip:text;
                 background-clip:text;color:transparent;margin-bottom:28px;">
                 Stuvo
             </div>

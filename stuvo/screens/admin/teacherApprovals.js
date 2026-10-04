@@ -58,7 +58,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                         <div class="card-header">
                             <div style="flex:1;min-width:0;">
                                 <div style="font-size:15px;font-weight:600;">${t.officialName || _i18n_t('admin.unnamedTeacher','Unnamed Teacher')}</div>
-                                <div class="hw-sub">${t.email ? `<a href="mailto:${String(t.email).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}" style="color:inherit;">${String(t.email).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</a>` : _i18n_t('admin.noEmail','No email')} · @${t.username || '—'}</div>
+                                <div class="hw-sub">${t.email ? `<a href="mailto:${String(t.email).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}" style="color:inherit;">${String(t.email).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</a>` : _i18n_t('admin.noEmail','No email')} · @${t.username || ','}</div>
                             </div>
                             <span class="badge badge-yellow">${_i18n_t('admin.pendingBadge','Pending')}</span>
                         </div>

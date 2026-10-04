@@ -230,7 +230,7 @@ function showFirstTimeLanguagePrompt() {
           </button>
         `).join('')}
       </div>
-      <button class="lang-prompt-skip" id="lang-prompt-skip">${t('language.skip','Skip — Continue in English')}</button>
+      <button class="lang-prompt-skip" id="lang-prompt-skip">${t('language.skip','Skip: Continue in English')}</button>
     </div>
   `;
   document.body.appendChild(overlay);

@@ -150,7 +150,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                             <div class="card-header">
                                 <div style="flex:1;min-width:0;">
                                     <div style="font-size:15px;font-weight:600;">${h.title}</div>
-                                    <div class="hw-sub">${selectedClass.name} · ${h.subject || '—'} · Due ${formatDueDate(h.deadline)}</div>
+                                    <div class="hw-sub">${selectedClass.name} · ${h.subject || ','} · Due ${formatDueDate(h.deadline)}</div>
                                 </div>
                                 <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
                                     <span class="badge ${h.status === 'open' ? 'badge-yellow' : 'badge-green'}">
@@ -261,7 +261,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                     const notifPayload = {
                         type: 'new_homework',
                         title: `New homework: ${title}`,
-                        body: `${clsForNotif ? clsForNotif.name + ' · ' : ''}${subject} — due ${deadline}`,
+                        body: `${clsForNotif ? clsForNotif.name + ' · ' : ''}${subject}: due ${deadline}`,
                         relatedClassId: selectedClassId,
                         relatedHomeworkId: hwRef.id,
                         read: false,
@@ -293,7 +293,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
             <div class="divider" style="margin:14px 0;"></div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
                 <div style="font-size:13px;font-weight:600;color:var(--text-dim);">
-                    📝 ${quizDraft.length} question${quizDraft.length === 1 ? '' : 's'} generated — edit before publishing
+                    📝 ${quizDraft.length} question${quizDraft.length === 1 ? '' : 's'} generated: edit before publishing
                 </div>
                 <button class="btn btn-danger btn-sm" id="btn-cancel-quiz" style="margin-top:0;">✕ Discard</button>
             </div>
@@ -412,13 +412,13 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                         createdBy: uid,
                         createdAt: serverTimestamp(),
                     });
-                    // D.1 Smart Notification Center — new_homework (AI quiz): fan-out to enrolled students
+                    // D.1 Smart Notification Center: new_homework (AI quiz): fan-out to enrolled students
                     try {
                         const studentIds2 = (cls && cls.studentIds) || (classes.find(c => c.id === selectedClassId)?.studentIds) || [];
                         const payload2 = {
                             type: 'new_homework',
                             title: `New homework: ${title}`,
-                            body: `${(cls && cls.name ? cls.name + ' · ' : '')}AI Quiz — due ${deadline || 'soon'}`,
+                            body: `${(cls && cls.name ? cls.name + ' · ' : '')}AI Quiz: due ${deadline || 'soon'}`,
                             relatedClassId: selectedClassId,
                             relatedHomeworkId: hwRef2.id,
                             read: false,

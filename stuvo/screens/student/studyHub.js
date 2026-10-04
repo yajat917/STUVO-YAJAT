@@ -39,7 +39,7 @@ function saveData(partial) {
         return true;
     } catch (e) {
         console.error('[saveData] localStorage write failed', e);
-        try { if (typeof showToast === 'function') showToast('Could not save progress locally — storage unavailable', 'error'); } catch {}
+        try { if (typeof showToast === 'function') showToast('Could not save progress locally: storage unavailable', 'error'); } catch {}
         return false;
     }
 }
@@ -277,7 +277,7 @@ function todayHTML() {
 function learnHTML(subjects) {
     return `
         <div class="glass-card" id="doubt-card">
-            <div class="card-label">Doubt Assistant — Ask Anything</div>
+            <div class="card-label">Doubt Assistant: Ask Anything</div>
             <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
                 <select class="form-control" id="doubt-subject" style="width:auto;flex:0 0 180px;" aria-label="Subject">
                     ${shSubjectOptions(subjects)}
@@ -289,7 +289,7 @@ function learnHTML(subjects) {
                 </div>
             </div>
             <div id="chat-thread" style="min-height:200px;max-height:420px;overflow-y:auto;background:rgba(0,0,0,0.15);border-radius:14px;padding:16px;margin-bottom:14px;display:flex;flex-direction:column;gap:14px;">
-                <div style="text-align:center;color:var(--text-dim);font-size:13px;">Ask any academic question — I'll explain it step by step 🤖</div>
+                <div style="text-align:center;color:var(--text-dim);font-size:13px;">Ask any academic question: I'll explain it step by step 🤖</div>
             </div>
             <form id="chat-form" style="display:flex;gap:10px;">
                 <textarea class="form-control" id="doubt-question" rows="2" placeholder="Type your question…" style="flex:1;resize:vertical;" aria-label="Your question"></textarea>
@@ -312,7 +312,7 @@ function learnHTML(subjects) {
             <div id="rev-progress" style="display:none;margin-top:16px;">
                 <div style="display:flex;gap:8px;align-items:center;">
                     <div style="flex:1;height:6px;background:rgba(255,255,255,0.06);border-radius:6px;overflow:hidden;">
-                        <div id="rev-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#7C5CFC,#4F8CFF);"></div>
+                        <div id="rev-progress-bar" class="progress-fill" style="height:100%;width:100%;background:linear-gradient(90deg,#7C5CFC,#4F8CFF);--progress:0;"></div>
                     </div>
                     <span id="rev-progress-text" style="font-size:12px;color:var(--text-dim);">0/5</span>
                 </div>
@@ -332,7 +332,7 @@ function learnHTML(subjects) {
 function practiceHTML(subjects) {
     return `
         <div class="glass-card" id="quiz-card">
-            <div class="card-label">Quiz Yourself — Chapter/Notes Based</div>
+            <div class="card-label">Quiz Yourself: Chapter/Notes Based</div>
             <div class="form-group">
                 <label>Subject (from your personalized list)</label>
                 <select class="form-control" id="quiz-subject-select">${shSubjectOptions(subjects)}</select>
@@ -384,7 +384,7 @@ function practiceHTML(subjects) {
 
 function trackHTML() {
     return `
-        <div class="glass-card" id="health-card" style="border-left:3px solid #C4B5FD;">
+        <div class="glass-card status-tab is-brand" id="health-card">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
                 <div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.08em;font-weight:600;">Subject Health Check</div>
                 <span style="font-size:11px;color:var(--text-dim);background:rgba(255,255,255,0.06);padding:4px 8px;border-radius:20px;">Tap a subject that needs attention for a deep dive</span>
@@ -425,7 +425,7 @@ function trackHTML() {
 function planHTML() {
     return `
         <div class="glass-card" id="exam-card">
-            <div class="card-label">Exam Countdown — Deterministic plan, no AI for schedule</div>
+            <div class="card-label">Exam Countdown: Deterministic plan, no AI for schedule</div>
             <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px;line-height:1.6;">Create a stable daily plan: round-robin subjects across days until your exam. AI is only used when you tap a day to generate revision content.</p>
             <div id="exam-create-form" style="background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:12px;padding:14px;margin-bottom:16px;">
                 <div class="form-row">
@@ -450,8 +450,8 @@ function planHTML() {
             <div id="exam-day-revision-output" style="margin-top:16px;"></div>
         </div>
         <div class="glass-card" id="schedule-card" style="margin-top:20px;">
-            <div class="card-label">Schedule Generator — rule-based week, AI explains it</div>
-            <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px;line-height:1.6;">Your week is allocated by fixed rules (weak subjects first, round-robin) — identical every time for the same inputs. AI only writes the summary.</p>
+            <div class="card-label">Schedule Generator: rule-based week, AI explains it</div>
+            <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px;line-height:1.6;">Your week is allocated by fixed rules (weak subjects first, round-robin): identical every time for the same inputs. AI only writes the summary.</p>
             <div class="form-group">
                 <label>Subjects in my week</label>
                 <div id="sched-subject-pills" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;min-height:28px;"></div>
@@ -471,12 +471,12 @@ function planHTML() {
             <div class="card-label">My Study Profile</div>
             <div id="profile-body"><div class="spinner" style="margin:12px auto;"></div></div>
         </div>
-        <div class="glass-card" id="self-schedule-card" style="margin-top:20px;border-left:3px solid #7C5CFC;">
+        <div class="glass-card status-tab is-brand" id="self-schedule-card" style="margin-top:20px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <div class="card-label" style="margin-bottom:0;">🗓 ${_i18n_t('studyHub.selfStudy.mySchedule', 'My Schedule')}</div>
                 <span class="badge badge-violet">${_i18n_t('studyHub.selfStudy.personalBadge', 'Personal')}</span>
             </div>
-            <p style="font-size:12px;color:var(--text-dim);margin:8px 0 14px;line-height:1.6;">${_i18n_t('studyHub.selfStudy.privateScheduleNote', "Private to you — your teachers can't see this.")}</p>
+            <p style="font-size:12px;color:var(--text-dim);margin:8px 0 14px;line-height:1.6;">${_i18n_t('studyHub.selfStudy.privateScheduleNote', "Private to you: your teachers can't see this.")}</p>
             <div id="self-schedule-form" class="hidden" style="background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:12px;padding:14px;margin-bottom:16px;">
                 <div id="self-slot-form-title" style="font-size:13px;font-weight:700;margin-bottom:10px;">${_i18n_t('studyHub.selfStudy.addBlock', 'Add study block')}</div>
                 <div class="form-row">
@@ -511,12 +511,12 @@ function planHTML() {
             <button type="button" class="btn btn-sm" id="self-slot-add" style="margin-top:0;">+ ${_i18n_t('studyHub.selfStudy.addBlock', 'Add study block')}</button>
             <div id="self-schedule-list" style="margin-top:16px;"><div class="spinner" style="margin:16px auto;"></div></div>
         </div>
-        <div class="glass-card" id="self-tasks-card" style="margin-top:20px;border-left:3px solid #10B981;">
+        <div class="glass-card status-tab is-success" id="self-tasks-card" style="margin-top:20px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <div class="card-label" style="margin-bottom:0;">✅ ${_i18n_t('studyHub.selfStudy.myTasks', 'My Tasks')}</div>
                 <span class="badge badge-green">${_i18n_t('studyHub.selfStudy.personalBadge', 'Personal')}</span>
             </div>
-            <p style="font-size:12px;color:var(--text-dim);margin:8px 0 14px;line-height:1.6;">${_i18n_t('studyHub.selfStudy.personalTasksNote', 'Personal checklist — not graded work.')}</p>
+            <p style="font-size:12px;color:var(--text-dim);margin:8px 0 14px;line-height:1.6;">${_i18n_t('studyHub.selfStudy.personalTasksNote', 'Personal checklist: not graded work.')}</p>
             <div style="background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);border-radius:12px;padding:14px;margin-bottom:16px;">
                 <div class="form-row">
                     <div class="form-group" style="margin-bottom:0;flex:2;">
@@ -563,7 +563,7 @@ function showGradeSetupModal(container, onDone) {
         overlay.innerHTML = `
             <div class="modal" style="max-width:420px;text-align:center;">
                 <div class="modal-title" style="margin-bottom:8px;">Welcome to Study Hub</div>
-                <p style="font-size:13px;color:var(--text-dim);line-height:1.6;margin-bottom:18px;">Personalize your subjects — this helps us show the right subjects everywhere. You can change this anytime in Accessibility.</p>
+                <p style="font-size:13px;color:var(--text-dim);line-height:1.6;margin-bottom:18px;">Personalize your subjects: this helps us show the right subjects everywhere. You can change this anytime in Accessibility.</p>
                 <div id="gs-modal-step-grade">
                     <div style="font-weight:700;font-size:14px;margin-bottom:10px;">What grade are you in?</div>
                     <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
@@ -577,7 +577,7 @@ function showGradeSetupModal(container, onDone) {
                     </div>
                 </div>
                 <button class="btn" id="gs-modal-save" style="margin-top:18px;width:100%;opacity:${!gradeVal || (isStreamNeeded(gradeVal) && !streamVal) ? '0.6' : ''}" ${!gradeVal || (isStreamNeeded(gradeVal) && !streamVal) ? 'disabled' : ''}>Save & Continue</button>
-                <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">Same two-step UI as in Accessibility — grade 9–10 skips stream.</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">Same two-step UI as in Accessibility: grade 9–10 skips stream.</div>
             </div>
         `;
         overlay.querySelectorAll('[data-grade]').forEach(function (b) {
@@ -688,7 +688,7 @@ function renderStudentStudyHub(container, params = {}) {
                     const banner = document.createElement("div");
                     banner.id = "bedtime-banner-studyhub";
                     banner.style.cssText = "background:linear-gradient(135deg,rgba(124,92,252,0.15),rgba(79,140,255,0.12));border:1px solid rgba(124,92,252,0.3);border-radius:14px;padding:14px 16px;display:flex;align-items:center;gap:12px;margin-bottom:16px;";
-                    banner.innerHTML = '<div style="font-size:22px;">🌙</div><div style="flex:1;"><div style="font-weight:700;font-size:14px;">It\'s getting late — consider wrapping up soon.</div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">A good wind-down helps you rest. You can dismiss this and it won\'t reappear today.</div></div><button id="bedtime-dismiss-sh" class="btn btn-secondary btn-sm" style="margin-top:0;width:auto;flex-shrink:0;">Dismiss</button>';
+                    banner.innerHTML = '<div style="font-size:22px;">🌙</div><div style="flex:1;"><div style="font-weight:700;font-size:14px;">It\'s getting late: consider wrapping up soon.</div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">A good wind-down helps you rest. You can dismiss this and it won\'t reappear today.</div></div><button id="bedtime-dismiss-sh" class="btn btn-secondary btn-sm" style="margin-top:0;width:auto;flex-shrink:0;">Dismiss</button>';
                     container.querySelector('.flex-col').prepend(banner);
                     banner.querySelector("#bedtime-dismiss-sh").addEventListener("click", () => { banner.remove(); localStorage.setItem(key, "1"); });
                 }
@@ -803,7 +803,7 @@ function bindToday(container, ctx) {
                     <div style="font-size:30px;">🔥</div>
                     <div style="font-family:'Sora',sans-serif;font-size:26px;font-weight:800;">${n}</div>
                 </div>
-                <div style="font-size:12px;color:var(--text-dim);">${n === 1 ? 'day streak — keep it going' : 'day streak'}</div>
+                <div style="font-size:12px;color:var(--text-dim);">${n === 1 ? 'day streak: keep it going' : 'day streak'}</div>
             </div>`;
     }
 
@@ -1002,6 +1002,9 @@ function bindToday(container, ctx) {
     if (badge) badge.textContent = WORK / 60 + '/' + BREAK_TIME / 60 + ' min';
 
     function updateFocusDisplay() {
+        // Intentionally unanimated: the Pomodoro tick fires every second for up
+        // to 50 minutes. Per the performance contract, high-frequency updates
+        // get instant 0ms state changes, never transitions.
         const m = Math.floor(focusSecondsLeft / 60).toString().padStart(2, '0');
         const s = (focusSecondsLeft % 60).toString().padStart(2, '0');
         const timerEl = container.querySelector('#focus-timer');
@@ -1019,7 +1022,7 @@ function bindToday(container, ctx) {
     function focusTick() {
         if (_dur.labelWork === 'Flexible Focus' && focusPhase === 'work' && !gentleReminderDone && (WORK - focusSecondsLeft) === 25 * 60) {
             gentleReminderDone = true;
-            showToast('You’ve been focused for 25 min — keep going or take a gentle pause if you need 🌿', 'info');
+            showToast('You’ve been focused for 25 min: keep going or take a gentle pause if you need 🌿', 'info');
         }
         if (focusSecondsLeft <= 1) {
             if (focusPhase === 'work') {
@@ -1132,7 +1135,7 @@ function bindLearn(container, ctx) {
         const thread = container.querySelector('#chat-thread');
         if (!thread) return;
         if (doubtHistory.length === 0) {
-            thread.innerHTML = `<div style="text-align:center;color:var(--text-dim);font-size:13px;">Ask any academic question — I'll explain it step by step 🤖</div>`;
+            thread.innerHTML = `<div style="text-align:center;color:var(--text-dim);font-size:13px;">Ask any academic question: I'll explain it step by step 🤖</div>`;
             return;
         }
         thread.innerHTML = doubtHistory.map((msg, idx) => {
@@ -1228,7 +1231,9 @@ function bindLearn(container, ctx) {
         const pct = (viewed / total) * 100;
         const bar = container.querySelector('#rev-progress-bar');
         const text = container.querySelector('#rev-progress-text');
-        if (bar) bar.style.width = pct + '%';
+        // Transform-only fill: scaleX replaces the old width write so the
+        // compositor handles it. Origin-left keeps the left edge anchored.
+        if (bar) { bar.style.setProperty('--progress', (pct / 100).toFixed(3)); bar.classList.add('progress-fill'); }
         if (text) text.textContent = viewed + '/' + total;
         container.querySelectorAll('.rev-dot').forEach(dot => {
             const step = parseInt(dot.dataset.step);
@@ -1459,7 +1464,7 @@ function bindPractice(container, ctx) {
             } catch (e) {}
             items.sort(function (a, b) { return b.date.localeCompare(a.date); });
             if (!items.length) {
-                bitsHost.innerHTML = '<div style="font-size:13px;color:var(--text-dim);padding:8px 0;">No practice bits in the last 7 days — generate today\'s bit to start a streak.</div>';
+                bitsHost.innerHTML = '<div style="font-size:13px;color:var(--text-dim);padding:8px 0;">No practice bits in the last 7 days: generate today\'s bit to start a streak.</div>';
                 return;
             }
             bitsHost.innerHTML = items.slice(0, 7).map(function (h, i) {
@@ -1500,9 +1505,9 @@ function bindTrack(container, ctx) {
             var cfg = getHealthStatusConfig(data.status);
             var escSub = shEsc(subject);
             var statusLabel = data.status === 'insufficient_data' ? 'Not enough data yet' : cfg.label;
-            var desc = data.status === 'insufficient_data' ? 'Not enough data yet — complete a quiz or practice' :
+            var desc = data.status === 'insufficient_data' ? 'Not enough data yet: complete a quiz or practice' :
                 data.status === 'needs_attention' ? escSub + ' could use a little attention' :
-                data.status === 'steady' ? escSub + ' — steady' : escSub + ' — strong';
+                data.status === 'steady' ? escSub + ': steady' : escSub + ': strong';
             var clickable = (data.status === 'needs_attention' || data.status === 'steady');
             return '<div class="health-chip" data-health-subject="' + escSub + '"' + (clickable ? ' role="button" tabindex="0" aria-label="' + escSub + ', ' + statusLabel + '. Open detailed analysis."' : '') +
                 ' style="min-width:150px;flex:0 0 auto;background:var(--glass);border:1px solid var(--glass-border);border-radius:14px;padding:12px;text-align:center;' +
@@ -1542,7 +1547,7 @@ function bindTrack(container, ctx) {
         if (!row) return;
         var subjectsForHealth = (ctx.subjects && ctx.subjects.length) ? ctx.subjects : [];
         if (!subjectsForHealth.length) {
-            row.innerHTML = '<div style="font-size:13px;color:var(--text-dim);padding:12px;text-align:center;width:100%;">No subjects yet — set grade/stream or join a class.</div>';
+            row.innerHTML = '<div style="font-size:13px;color:var(--text-dim);padding:12px;text-align:center;width:100%;">No subjects yet: set grade/stream or join a class.</div>';
             return;
         }
         try {
@@ -1570,7 +1575,7 @@ function bindTrack(container, ctx) {
     initTrackCharts(container);
 }
 
-// Weakness Analyzer — deep dive for ONE subject, driven by the SAME data as
+// Weakness Analyzer: deep dive for ONE subject, driven by the SAME data as
 // the Health Check (context weakSubjects + real quiz/practice numbers).
 // The AI only phrases what the numbers already show.
 async function openWeaknessAnalyzer(container, ctx, subject, healthEntry, allHealth) {
@@ -1579,11 +1584,11 @@ async function openWeaknessAnalyzer(container, ctx, subject, healthEntry, allHea
     var title = container.querySelector('#weakness-title');
     if (!card || !body) return;
     card.classList.remove('hidden');
-    title.textContent = 'Weakness Analyzer — ' + subject;
+    title.textContent = 'Weakness Analyzer: ' + subject;
     body.innerHTML = '<div class="spinner" style="margin:12px auto;"></div><div style="font-size:12px;color:var(--text-dim);text-align:center;">Reading your real performance data…</div>';
     card.scrollIntoView({ block: 'start' });
 
-    // Real numbers only — from shared context + module-owned practiceBits
+    // Real numbers only: from shared context + module-owned practiceBits
     var quizzes = (ctx.quizHistory || []).filter(function (q) { return q.subject === subject; }).slice(0, 5);
     var quizScores = quizzes.map(function (q) {
         var s = Number(q.score), t = Number(q.totalQuestions);
@@ -1624,7 +1629,7 @@ async function openWeaknessAnalyzer(container, ctx, subject, healthEntry, allHea
         '</div>';
 
     if (!quizScores.length && practiceBitAccuracy === null) {
-        body.innerHTML = numbersHTML + '<div style="font-size:13px;color:var(--text-dim);line-height:1.7;">Not enough real data for ' + shEsc(subject) + ' yet — attempt a quiz or practice bit first, then come back for your deep dive.</div>';
+        body.innerHTML = numbersHTML + '<div style="font-size:13px;color:var(--text-dim);line-height:1.7;">Not enough real data for ' + shEsc(subject) + ' yet: attempt a quiz or practice bit first, then come back for your deep dive.</div>';
         return;
     }
     try {
@@ -1647,7 +1652,7 @@ async function openWeaknessAnalyzer(container, ctx, subject, healthEntry, allHea
     }
 }
 
-// Merged Progress/Analytics — glance stats on top, historical charts below
+// Merged Progress/Analytics: glance stats on top, historical charts below
 async function loadTrackProgress(container, ctx) {
     var host = container.querySelector('#progress-glance');
     var statsHost = container.querySelector('#weekly-stats');
@@ -1712,7 +1717,7 @@ async function loadTrackProgress(container, ctx) {
             </div>
             <div style="margin-top:12px;background:rgba(124,92,252,0.08);border:1px solid rgba(124,92,252,0.2);border-radius:12px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
                 <div style="font-size:13px;font-weight:600;">🎯 Focus this week: ${focusWeekMinutes}m across ${focusWeekSessions} session${focusWeekSessions === 1 ? '' : 's'}</div>
-                <div style="font-size:11px;color:var(--text-dim);">Includes Pomodoro time from Today — stays in sync automatically.</div>
+                <div style="font-size:11px;color:var(--text-dim);">Includes Pomodoro time from Today: stays in sync automatically.</div>
             </div>`;
     }
     // Weekly stats: shared context's recent activity + local focus history.
@@ -1934,7 +1939,7 @@ function bindPlan(container, ctx) {
                 return da - dbv;
             });
             if (!exams.length) {
-                listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:13px;">No exams yet — add one above. ✨<br><span style="font-size:11px;">You' + '\'ll see days to prepare and Today\'s focus, not pressure.</span></div>';
+                listEl.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim);font-size:13px;">No exams yet: add one above. ✨<br><span style="font-size:11px;">You' + '\'ll see days to prepare and Today\'s focus, not pressure.</span></div>';
                 return;
             }
             var todayStr = new Date().toISOString().split('T')[0];
@@ -1958,7 +1963,7 @@ function bindPlan(container, ctx) {
                 var plan = d.dailyPlan || [];
                 var todayPlan = plan.filter(function (p) { return p.date === todayStr; });
                 var todaySubjects = todayPlan.map(function (p) { var base = [p.subject]; if (p.extraSubjects) base = base.concat(p.extraSubjects); return base; }).flat();
-                var todayLabel = todaySubjects.length ? todaySubjects.join(', ') : (plan.length ? 'All caught for today — check upcoming days' : 'No plan yet');
+                var todayLabel = todaySubjects.length ? todaySubjects.join(', ') : (plan.length ? 'All caught for today: check upcoming days' : 'No plan yet');
                 return '<div class="glass-card" style="margin-bottom:12px;">' +
                     '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">' +
                     '<div><div style="font-family:\'Sora\',sans-serif;font-weight:800;font-size:16px;">' + examNameEsc + '</div><div style="font-size:12px;color:var(--text-dim);margin-top:2px;">' + examDateObj.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) + ' · ' + (d.subjects || []).map(shEsc).join(', ') + '</div></div>' +
@@ -1985,7 +1990,7 @@ function bindPlan(container, ctx) {
                             + '<span style="background:var(--glass);border:1px solid var(--glass-border);padding:2px 8px;border-radius:20px;font-size:11px;">' + dateLabel + '</span>'
                             + '<span style="font-size:13px;color:' + (isPast && !day.completed ? '#FCA5A5' : 'var(--text)') + ';cursor:pointer;text-decoration:underline dotted;" data-exam-day-subject="' + shEsc(day.subject).replace(/"/g, '&quot;') + '" data-exam-id-tap="' + ex.id + '" data-day-date="' + day.date + '">' + shEsc(subjectsLine) + '</span>'
                             + '</div>'
-                            + (isPast && !day.completed ? '<div style="font-size:11px;color:#FCA5A5;margin-top:2px;">Missed — will be redistributed forward</div>' : '') +
+                            + (isPast && !day.completed ? '<div style="font-size:11px;color:#FCA5A5;margin-top:2px;">Missed: will be redistributed forward</div>' : '') +
                             (day.topic ? '<div style="font-size:11px;color:var(--text-dim);margin-top:2px;">Topic: ' + shEsc(day.topic) + '</div>' : '') +
                             '</div>'
                             + '<span style="font-size:11px;color:var(--text-dim);">' + day.date + '</span>'
@@ -2093,12 +2098,12 @@ function bindPlan(container, ctx) {
                     createdAt: serverTimestamp(),
                     dailyPlan: schedule
                 });
-                showToast('Exam plan created — ' + schedule.length + ' days to prepare ✓', 'success');
+                showToast('Exam plan created: ' + schedule.length + ' days to prepare ✓', 'success');
                 if (nameInput) nameInput.value = '';
                 if (dateInput) dateInput.value = '';
                 examSelectedSubjects = [];
                 await renderExamSubjectPills();
-                if (statusEl) statusEl.textContent = '✓ Created — ' + schedule.length + ' study days planned.';
+                if (statusEl) statusEl.textContent = '✓ Created: ' + schedule.length + ' study days planned.';
                 loadExamCountdowns();
             } catch (e) {
                 showToast('Failed to create exam: ' + (e.message || ''), 'error');
@@ -2168,7 +2173,7 @@ function bindPlan(container, ctx) {
         } finally { btn.disabled = false; btn.textContent = '✨ Explain My Week'; }
     });
 
-    // ── Profile (from shared context — no independent query) ──
+    // ── Profile (from shared context: no independent query) ──
     var profileBody = container.querySelector('#profile-body');
     if (profileBody) {
         profileBody.innerHTML = `
@@ -2194,12 +2199,12 @@ function bindPlan(container, ctx) {
         });
     }
 
-    // ── Self-Study Zone (private personal layer — never teacher-visible) ──
+    // ── Self-Study Zone (private personal layer: never teacher-visible) ──
     bindSelfStudy(container, ctx);
 }
 
 // ══════════════════════════════════════════════════════════════
-// SELF-STUDY ZONE — My Schedule + My Tasks (student-private)
+// SELF-STUDY ZONE: My Schedule + My Tasks (student-private)
 // All reads/writes scoped to users/{uid}/personalTimetable|personalTasks.
 // No teacher/admin screen queries these collections (privacy by absence,
 // enforced by Firestore rules: owner-uid match only, no exceptions).
@@ -2231,11 +2236,11 @@ function bindSelfStudy(container, ctx) {
 
     // ── Shared subject selects ──
     var slotSubjectSel = container.querySelector('#self-slot-subject');
-    if (slotSubjectSel) slotSubjectSel.innerHTML = '<option value="">—</option>' + subjects.map(function (s) {
+    if (slotSubjectSel) slotSubjectSel.innerHTML = '<option value="">Select</option>' + subjects.map(function (s) {
         return '<option value="' + shEsc(s) + '">' + shEsc(s) + '</option>';
     }).join('');
     var taskSubjectSel = container.querySelector('#self-task-subject');
-    if (taskSubjectSel) taskSubjectSel.innerHTML = '<option value="">—</option>' + subjects.map(function (s) {
+    if (taskSubjectSel) taskSubjectSel.innerHTML = '<option value="">Select</option>' + subjects.map(function (s) {
         return '<option value="' + shEsc(s) + '">' + shEsc(s) + '</option>';
     }).join('');
     var daySel = container.querySelector('#self-slot-day');
@@ -2441,7 +2446,7 @@ function bindSelfStudy(container, ctx) {
             '<div class="empty-state"><div class="empty-icon">✅</div>' +
             '<div class="empty-title">' + shEsc(_i18n_t('studyHub.selfStudy.emptyTasks', 'No personal tasks yet. Add something you want to work on.')) + '</div></div>';
         doneHost.innerHTML = done.length ? done.map(taskRow).join('') :
-            '<div style="font-size:12px;color:var(--text-dim);padding:6px 0;">—</div>';
+            '<div style="font-size:12px;color:var(--text-dim);padding:6px 0;">None yet</div>';
         if (doneCount) doneCount.textContent = done.length ? String(done.length) : '';
         container.querySelectorAll('[data-task-toggle]').forEach(function (cb) {
             cb.addEventListener('change', async function () {

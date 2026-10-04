@@ -67,7 +67,7 @@ async function renderStudentReport(container) {
         </div>
       </div>
 
-      <div class="glass-card" style="border-left: 3px solid #93C5FD;">
+      <div class="glass-card status-tab is-info">
         <div style="font-size:13px; font-weight:700; color:#93C5FD;">${_i18n_t('report.needImmediateHelp','Need immediate help?')}</div>
         <p style="font-size:13px; color: var(--text-dim); line-height:1.6; margin-top:6px;">${_i18n_t('report.needImmediateHelpDesc','If you or someone else is in danger, please contact a trusted adult, school counselor, or local helpline right away.')}</p>
         <div style="display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;">
@@ -85,11 +85,11 @@ async function renderStudentReport(container) {
 
   function syncPrivacyUI() {
     if (isAnonymous) {
-      btnAnon.style.background = 'linear-gradient(135deg,#7C5CFC,#4F8CFF)'; btnAnon.style.color = '#fff'; btnAnon.style.borderColor = 'rgba(124,92,252,0.5)';
+      btnAnon.style.background = 'linear-gradient(135deg,#7C5CFC,#4F8CFF)'; btnAnon.style.color = 'var(--text-bright)'; btnAnon.style.borderColor = 'rgba(124,92,252,0.5)';
       btnConf.style.background = ''; btnConf.style.color = ''; btnConf.style.borderColor = '';
       hint.textContent = _i18n_t('report.privacyHintAnonymous','Anonymous: your report will be submitted without your name or UID. You will not be able to track status afterwards via My Reports, but admins will still review it.');
     } else {
-      btnConf.style.background = 'linear-gradient(135deg,#7C5CFC,#4F8CFF)'; btnConf.style.color = '#fff'; btnConf.style.borderColor = 'rgba(124,92,252,0.5)';
+      btnConf.style.background = 'linear-gradient(135deg,#7C5CFC,#4F8CFF)'; btnConf.style.color = 'var(--text-bright)'; btnConf.style.borderColor = 'rgba(124,92,252,0.5)';
       btnAnon.style.background = ''; btnAnon.style.color = ''; btnAnon.style.borderColor = '';
       hint.textContent = _i18n_t('report.privacyHintConfidential','Confidential: your name is shared only with admins reviewing the report.') + ' ' + _i18n_t('report.trackInMyReports','You can track status in My Reports.');
     }

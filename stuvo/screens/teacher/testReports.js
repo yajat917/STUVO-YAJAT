@@ -17,9 +17,9 @@ async function renderTeacherTestReports(container) {
     let reports = [];
 
     function fmtDate(ts) {
-        if (!ts) return '—';
+        if (!ts) return ',';
         const d = ts.toDate ? ts.toDate() : new Date(ts);
-        return isNaN(d) ? '—' : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        return isNaN(d) ? ',' : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
     }
 
     async function load() {
@@ -111,7 +111,7 @@ async function renderTeacherTestReports(container) {
             const first = items[0];
             const avg = items.map(reportPct).filter(Boolean);
             const testAvg = avg.length ? Math.round(avg.reduce((s, r) => s + r.pct, 0) / avg.length) : 0;
-            return { name, subject: first?.subject || '—', count: items.length, avg: testAvg, date: first?.createdAt };
+            return { name, subject: first?.subject || ',', count: items.length, avg: testAvg, date: first?.createdAt };
         });
 
         container.innerHTML = `

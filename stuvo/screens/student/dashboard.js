@@ -111,7 +111,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
 
     const attendancePct = attendance.total ? Math.round(attendance.present / attendance.total * 100) : null;
     const hwDonePct = homework.total ? Math.round(homework.done / homework.total * 100) : null;
-    const gradeLabel = gradePct === null ? '—' : (gradePct >= 90 ? 'A+' : gradePct >= 80 ? 'A' : gradePct >= 70 ? 'B+' : gradePct >= 60 ? 'B' : gradePct >= 50 ? 'C' : 'D');
+    const gradeLabel = gradePct === null ? ',' : (gradePct >= 90 ? 'A+' : gradePct >= 80 ? 'A' : gradePct >= 70 ? 'B+' : gradePct >= 60 ? 'B' : gradePct >= 50 ? 'C' : 'D');
 
     const gamification = typeof getData === 'function' ? getData().gamification || {} : {};
     const streakNum = gamification.streak || 0;
@@ -171,8 +171,8 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
 
                     ${createGlassCard(_i18n_t('dashboard.thisWeek','This Week'), `
                         ${createStatRow([
-                            { num: attendancePct === null ? '—' : attendancePct + '%', label: _i18n_t('dashboard.attendance','Attendance'), color: '#C4B5FD' },
-                            { num: hwDonePct === null ? '—' : hwDonePct + '%', label: _i18n_t('dashboard.homeworkDone','Homework Done'), color: '#93C5FD' },
+                            { num: attendancePct === null ? ',' : attendancePct + '%', label: _i18n_t('dashboard.attendance','Attendance'), color: '#C4B5FD' },
+                            { num: hwDonePct === null ? ',' : hwDonePct + '%', label: _i18n_t('dashboard.homeworkDone','Homework Done'), color: '#93C5FD' },
                             { num: gradeLabel, label: _i18n_t('dashboard.avgGrade','Avg. Grade'), color: '#FDE68A' }
                         ])}
                     `, '', 0.15)}
@@ -188,7 +188,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                         </div>
                     `, '', 0.22)}
 
-                    ${createGlassCard('⚡ ' + _i18n_t('dashboard.practiceBitToday','Practice Bit — Today'), `
+                    ${createGlassCard('⚡ ' + _i18n_t('dashboard.practiceBitToday','Practice Bit: Today'), `
                         <p style="font-size:14px;line-height:1.7;color:var(--text-dim);">
                             ${_i18n_t('dashboard.generatePractice','Generate your daily AI practice question and keep your streak alive.')}
                         </p>
@@ -254,7 +254,7 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                 } catch(e) {}
             }
             if (!data.priorities || !data.priorities.length) {
-                el.innerHTML = `<div style="font-size:13px;color:var(--text-dim);text-align:center;padding:12px;">${_i18n_t('dashboard.noPriorities','No priorities right now — enjoy the break!')}</div>`;
+                el.innerHTML = `<div style="font-size:13px;color:var(--text-dim);text-align:center;padding:12px;">${_i18n_t('dashboard.noPriorities','No priorities right now: enjoy the break!')}</div>`;
             } else {
                 el.innerHTML = data.priorities.map((p,i) => `
                     <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);">
