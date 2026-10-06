@@ -139,8 +139,8 @@ async function getStudyHubContext(uid, injectedDb) {
   enrolledSubjects = [...new Set(enrolledSubjects)];
   var allSubjects = [...new Set([...taxonomySubjects, ...enrolledSubjects])];
 
-  var recentActivity = await readSubcollection(uid, 'studyActivity', 'completedAt', 'desc', 30);
-  var quizHistory = await readSubcollection(uid, 'quizHistory', 'createdAt', 'desc', 20);
+  var recentActivity = await readSubcollection(uid, 'studyActivity', 'completedAt', 'desc', 500);
+  var quizHistory = await readSubcollection(uid, 'quizHistory', 'createdAt', 'desc', 200);
 
   // Compute weak subjects from real data — never invented.
   // A subject is weak when it has >= 2 scored quizzes averaging below 60%.
@@ -207,6 +207,77 @@ async function getStudyHubContext(uid, injectedDb) {
     }
   } catch (e) { currentStreak = 0; }
 
+  // ── Firestore-derived XP / Focus / streak (single source of truth) ──
+  // All values derive from studyActivity (+ quizHistory), grouped by IST day.
+  // Uses lib/xpFromActivity.js when loaded; inline fallback otherwise.
+  var _xpH = null;
+  try {
+    _xpH = (typeof XpFromActivity !== 'undefined' && XpFromActivity) ? XpFromActivity : null;
+    if (!_xpH && typeof window !== 'undefined' && window.XpFromActivity) _xpH = window.XpFromActivity;
+  } catch (e) { _xpH = null; }
+  var totalXP = 0, focusTodayMinutes = 0, focusTodaySessions = 0, focusTodayDayKey = null, computedStreak = 0, earnedBadges = [];
+  try {
+    if (_xpH && _xpH.totalXPFromCloud) {
+      totalXP = _xpH.totalXPFromCloud(recentActivity, quizHistory);
+      var _ft = _xpH.focusTodayFromActivities(recentActivity);
+      focusTodayMinutes = _ft.minutes; focusTodaySessions = _ft.sessions; focusTodayDayKey = _ft.dayKey;
+      computedStreak = _xpH.streakFromActivities(recentActivity, quizHistory, focusTodayDayKey);
+      earnedBadges = _xpH.badgesForXP(totalXP);
+    } else {
+      // Inline fallback (same semantics, IST via Intl).
+      var _toD = studyHubToDate;
+      var _dayK = function (v) {
+        var d = _toD(v);
+        if (!d) return null;
+        try {
+          return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+        } catch (e2) {
+          var s = new Date(d.getTime() + 19800000);
+          var mm = String(s.getUTCMonth() + 1).padStart(2, '0');
+          var dd2 = String(s.getUTCDate()).padStart(2, '0');
+          return s.getUTCFullYear() + '-' + mm + '-' + dd2;
+        }
+      };
+      var _xpFor = function (a) {
+        if (!a) return 0;
+        if (typeof a.xp === 'number' && a.xp > 0) return Math.floor(a.xp);
+        if (typeof a.xpAwarded === 'number' && a.xpAwarded > 0) return Math.floor(a.xpAwarded);
+        if ((a.type || 'focus') === 'focus') { var m = Math.floor(Number(a.durationMinutes) || 0); return m > 0 ? m : 0; }
+        if (a.type === 'doubt_asked' || a.type === 'revision') return 10;
+        return 0;
+      };
+      (recentActivity || []).forEach(function (a) { totalXP += _xpFor(a); });
+      totalXP += (quizHistory || []).length * 10;
+      var _tk;
+      try { _tk = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
+      catch (e3) { var _s = new Date(Date.now() + 19800000); _tk = _s.getUTCFullYear() + '-' + String(_s.getUTCMonth() + 1).padStart(2, '0') + '-' + String(_s.getUTCDate()).padStart(2, '0'); }
+      focusTodayDayKey = _tk;
+      (recentActivity || []).forEach(function (a) {
+        if (!a || a.type !== 'focus') return;
+        var d = _toD(a.completedAt) || _toD(a.createdAt);
+        if (!d || _dayK(d) !== _tk) return;
+        var mm2 = Math.floor(Number(a.durationMinutes) || 0);
+        if (mm2 > 0) { focusTodayMinutes += mm2; focusTodaySessions += 1; }
+      });
+      var _days = {};
+      (recentActivity || []).forEach(function (a) { var d = _toD(a.completedAt) || _toD(a.createdAt); if (d) { var k = _dayK(d); if (k) _days[k] = true; } });
+      (quizHistory || []).forEach(function (q) { var d = _toD(q.createdAt) || _toD(q.completedAt); if (d) { var k = _dayK(d); if (k) _days[k] = true; } });
+      var _cur = _toD(_tk);
+      if (!_days[_tk]) {
+        var _y = new Date((_cur ? _cur.getTime() : Date.now()) - 86400000);
+        var _yk = _dayK(_y);
+        if (!_yk || !_days[_yk]) { computedStreak = 0; }
+        else { _cur = _y; computedStreak = 0; for (var _i = 0; _i < 365; _i++) { var _k = _dayK(_cur); if (!_k || !_days[_k]) break; computedStreak++; _cur = new Date(_cur.getTime() - 86400000); } }
+      } else {
+        computedStreak = 0;
+        for (var _j = 0; _j < 365; _j++) { var _k2 = _dayK(_cur); if (!_k2 || !_days[_k2]) break; computedStreak++; _cur = new Date(_cur.getTime() - 86400000); }
+      }
+      [25, 50, 75, 100, 200].forEach(function (t, idx) { if (totalXP >= t) earnedBadges.push(['first-session', 'plan-master', 'streak-3', 'week-warrior', 'scholar'][idx]); });
+    }
+  } catch (e) {}
+  // Prefer computed streak; legacy studyPlanner doc (never written) stays as fallback.
+  var displayStreak = computedStreak > 0 ? computedStreak : (currentStreak || computedStreak);
+
   var ctx = {
     uid: uid,
     grade: grade,
@@ -217,6 +288,13 @@ async function getStudyHubContext(uid, injectedDb) {
     weakSubjects: weakSubjects,
     upcomingDeadlines: upcomingDeadlines,
     currentStreak: currentStreak,
+    computedStreak: computedStreak,
+    displayStreak: displayStreak,
+    totalXP: totalXP,
+    focusTodayMinutes: focusTodayMinutes,
+    focusTodaySessions: focusTodaySessions,
+    focusTodayDayKey: focusTodayDayKey,
+    earnedBadges: earnedBadges,
     languageName: _ctxLang
   };
 

@@ -11,6 +11,18 @@ let sessions = 0;
 document.addEventListener("DOMContentLoaded", () => {
   sessions = getData().gamification.focusSessions || 0;
   renderFocusStats();
+  // Firestore first: overwrite the local cache so Device B never shows zero
+  // when the cloud already has sessions.
+  try {
+    if (typeof window !== 'undefined' && window.StuvoCloud) {
+      window.StuvoCloud.readCloud().then(function (cloud) {
+        if (cloud && typeof cloud.totalXP === 'number') {
+          try { window.StuvoCloud.syncCacheFromCloud(cloud); } catch (e) {}
+          renderFocusStats(cloud);
+        }
+      }).catch(function () {});
+    }
+  } catch (e) {}
   updateDisplay();
 
   document.getElementById("start-btn").addEventListener("click", start);
@@ -23,10 +35,26 @@ function localDay(d) {
   return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
 }
 
-function renderFocusStats() {
+function istDay() {
+  try {
+    if (typeof window !== 'undefined' && window.XpFromActivity && window.XpFromActivity.istTodayKey) {
+      return window.XpFromActivity.istTodayKey();
+    }
+  } catch (e) {}
+  return localDay();
+}
+
+function renderFocusStats(cloud) {
+  // Cloud values win when provided; local cache is fallback only.
+  if (cloud && typeof cloud.focusTodaySessions === 'number') {
+    document.getElementById("today-sessions").textContent = cloud.focusTodaySessions;
+    document.getElementById("today-time").textContent = cloud.focusTodayMinutes + "m";
+    return;
+  }
   const data = getData();
-  const today = localDay();
-  const todaySessions = (data.focusHistory || []).filter(h => h.date === today);
+  var ist = istDay();
+  var loc = localDay();
+  const todaySessions = (data.focusHistory || []).filter(h => h && (h.date === ist || h.date === loc));
   const count = todaySessions.length;
   const time = todaySessions.reduce((sum, h) => sum + (Number(h.duration) || 0), 0);
 
@@ -63,18 +91,55 @@ function tick() {
 
 function onComplete() {
   if (phase === "work") {
-    sessions++;
-    const data = getData();
-    const today = localDay();
-    const newHistory = [...(data.focusHistory || [])];
-    newHistory.push({ date: today, duration: 25 }); // 25 min session
-
-    updateData({
-      gamification: { ...data.gamification, focusSessions: sessions },
-      focusHistory: newHistory
-    });
-
-    addXP(25); // Focus session completed: +25 XP
+    // Firestore first (awaited). Local cache second. Partial logic preserved.
+    var dayKey = istDay();
+    try {
+      if (typeof window !== 'undefined' && window.StuvoCloud && window.StuvoCloud.getUid()) {
+        window.StuvoCloud.writeFocus(25, 25).then(function (ok) {
+          if (ok) {
+            window.StuvoCloud.readCloud().then(function (cloud) {
+              if (cloud) { try { window.StuvoCloud.syncCacheFromCloud(cloud); } catch (e) {} renderFocusStats(cloud); }
+              else renderFocusStats();
+            }).catch(function () { renderFocusStats(); });
+          } else {
+            sessions++;
+            const data = getData();
+            const newHistory = [...(data.focusHistory || [])];
+            newHistory.push({ date: dayKey, duration: 25 });
+            updateData({ gamification: { ...data.gamification, focusSessions: sessions }, focusHistory: newHistory });
+            addXP(25);
+            renderFocusStats();
+          }
+        }).catch(function () {
+          sessions++;
+          const data2 = getData();
+          const newHistory2 = [...(data2.focusHistory || [])];
+          newHistory2.push({ date: dayKey, duration: 25 });
+          updateData({ gamification: { ...data2.gamification, focusSessions: sessions }, focusHistory: newHistory2 });
+          addXP(25);
+          renderFocusStats();
+        });
+      } else {
+        sessions++;
+        const data = getData();
+        const newHistory = [...(data.focusHistory || [])];
+        newHistory.push({ date: dayKey, duration: 25 }); // 25 min session
+        updateData({
+          gamification: { ...data.gamification, focusSessions: sessions },
+          focusHistory: newHistory
+        });
+        addXP(25); // Focus session completed: +25 XP
+        renderFocusStats();
+      }
+    } catch (e) {
+      sessions++;
+      const data3 = getData();
+      const newHistory3 = [...(data3.focusHistory || [])];
+      newHistory3.push({ date: dayKey, duration: 25 });
+      updateData({ gamification: { ...data3.gamification, focusSessions: sessions }, focusHistory: newHistory3 });
+      addXP(25);
+      renderFocusStats();
+    }
 
     phase = "break";
     secondsLeft = BREAK;
@@ -83,7 +148,6 @@ function onComplete() {
     secondsLeft = WORK;
   }
   updateDisplay();
-  renderFocusStats();
 }
 
 function start() {
@@ -108,20 +172,59 @@ function pause() {
 
 function reset() {
   // Partial-session save: real elapsed work time must never be discarded.
+  // Firestore first (awaited), local second — same behavior, cloud truth.
   if (phase === "work") {
     const elapsedMinutes = Math.floor((WORK - secondsLeft) / 60);
     if (elapsedMinutes >= 1) {
-      const data = getData();
-      const today = localDay();
-      const newHistory = [...(data.focusHistory || [])];
-      newHistory.push({ date: today, duration: elapsedMinutes, partial: true });
-      sessions++;
-      updateData({
-        gamification: { ...data.gamification, focusSessions: sessions },
-        focusHistory: newHistory
-      });
-      addXP(Math.max(1, elapsedMinutes)); // 1 XP/min, same rate as full completion (25 XP / 25 min)
-      renderFocusStats();
+      var xpAward = Math.max(1, elapsedMinutes); // 1 XP/min
+      var dayKey = istDay();
+      try {
+        if (typeof window !== 'undefined' && window.StuvoCloud && window.StuvoCloud.getUid()) {
+          window.StuvoCloud.writeFocus(elapsedMinutes, xpAward).then(function (ok) {
+            if (ok) {
+              window.StuvoCloud.readCloud().then(function (cloud) {
+                if (cloud) { try { window.StuvoCloud.syncCacheFromCloud(cloud); } catch (e) {} renderFocusStats(cloud); }
+                else renderFocusStats();
+              }).catch(function () { renderFocusStats(); });
+            } else {
+              const data = getData();
+              const newHistory = [...(data.focusHistory || [])];
+              newHistory.push({ date: dayKey, duration: elapsedMinutes, partial: true });
+              sessions++;
+              updateData({ gamification: { ...data.gamification, focusSessions: sessions }, focusHistory: newHistory });
+              addXP(xpAward);
+              renderFocusStats();
+            }
+          }).catch(function () {
+            const data2 = getData();
+            const newHistory2 = [...(data2.focusHistory || [])];
+            newHistory2.push({ date: dayKey, duration: elapsedMinutes, partial: true });
+            sessions++;
+            updateData({ gamification: { ...data2.gamification, focusSessions: sessions }, focusHistory: newHistory2 });
+            addXP(xpAward);
+            renderFocusStats();
+          });
+        } else {
+          const data = getData();
+          const newHistory = [...(data.focusHistory || [])];
+          newHistory.push({ date: dayKey, duration: elapsedMinutes, partial: true });
+          sessions++;
+          updateData({
+            gamification: { ...data.gamification, focusSessions: sessions },
+            focusHistory: newHistory
+          });
+          addXP(xpAward);
+          renderFocusStats();
+        }
+      } catch (e) {
+        const data3 = getData();
+        const newHistory3 = [...(data3.focusHistory || [])];
+        newHistory3.push({ date: dayKey, duration: elapsedMinutes, partial: true });
+        sessions++;
+        updateData({ gamification: { ...data3.gamification, focusSessions: sessions }, focusHistory: newHistory3 });
+        addXP(xpAward);
+        renderFocusStats();
+      }
     }
   }
   clearInterval(interval);

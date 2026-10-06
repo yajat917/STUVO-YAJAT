@@ -155,7 +155,12 @@
     </div>
   </main>
 
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
   <script src="js/storage.js"></script>
+  <script src="js/xpFromActivity.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/ai.js"></script>
   <script>
     let cachedScore = 0;
@@ -164,8 +169,32 @@
       // 1. Initial Load of Goals & Focus
       initGoals();
       
-      // 2. Render Dashboard stats
+      // 2. Render Dashboard stats (local cache immediately, cloud overwrites)
       refreshDashboard();
+      // Firestore first: when signed in, cloud values replace local cache so
+      // a second device shows identical XP/streak/focus.
+      try {
+        if (typeof window !== 'undefined' && window.StuvoCloud) {
+          // Wait for auth persistence (shared with Stuvo on same origin).
+          const tryCloud = (attempts) => {
+            window.StuvoCloud.readCloud().then(function (cloud) {
+              if (cloud && typeof cloud.totalXP === 'number' && (cloud.activityCount || 0) > 0) {
+                try { window.StuvoCloud.syncCacheFromCloud(cloud); } catch (e) {}
+                try {
+                  document.getElementById("xp").textContent = cloud.totalXP + " XP (Lvl " + (Math.floor(cloud.totalXP / 100) + 1) + ")";
+                  document.getElementById("streak").textContent = (cloud.streak || 0) + " days";
+                  document.getElementById("focus-sessions-completed").textContent = cloud.focusTodaySessions;
+                  document.getElementById("focus-time-completed").textContent = cloud.focusTodayMinutes + "m";
+                } catch (e) {}
+              } else if (attempts > 0) {
+                setTimeout(() => tryCloud(attempts - 1), 1200);
+              }
+            }).catch(function () {});
+          };
+          setTimeout(() => tryCloud(3), 800);
+        }
+      } catch (e) {}
+
 
       // 3. Setup Insight refresh
       document.getElementById("refresh-insight-btn").addEventListener("click", () => {
@@ -228,11 +257,14 @@
         document.getElementById("today-plan").textContent = "No plan yet. Visit Planner to create one.";
       }
 
-      // Today's Focus stats
+      // Today's Focus stats — local fallback accepts both IST and local keys
+      // so midnight-timezone devices still match. Cloud overwrites above.
       const today = new Date().toISOString().split("T")[0];
-      const todayFocus = (data.focusHistory || []).filter(h => h.date === today);
+      var istToday = today;
+      try { if (window.XpFromActivity && window.XpFromActivity.istTodayKey) istToday = window.XpFromActivity.istTodayKey(); } catch (e) {}
+      const todayFocus = (data.focusHistory || []).filter(h => h && (h.date === today || h.date === istToday));
       const focusCount = todayFocus.length;
-      const focusTime = todayFocus.reduce((sum, h) => sum + h.duration, 0);
+      const focusTime = todayFocus.reduce((sum, h) => sum + (Number(h.duration) || 0), 0);
       document.getElementById("focus-sessions-completed").textContent = focusCount;
       document.getElementById("focus-time-completed").textContent = focusTime + "m";
 

@@ -86,8 +86,17 @@ function getLevelInfo(xp) {
 }
 
 function addXP(amount) {
+  // Local-cache mirror only. Firestore (via studyos/js/cloud.js StuvoCloud)
+  // is the single source of truth when signed in; cloud values overwrite this
+  // cache via StuvoCloud.syncCacheFromCloud(). Never read this before trying
+  // a cloud read on focus/analytics/dashboard pages.
   const data = getData();
-  const today = new Date().toISOString().split("T")[0];
+  var today = new Date().toISOString().split("T")[0];
+  try {
+    if (typeof window !== 'undefined' && window.XpFromActivity && window.XpFromActivity.istTodayKey) {
+      today = window.XpFromActivity.istTodayKey();
+    }
+  } catch (e) {}
   let streak = data.gamification.streak;
 
   if (data.gamification.lastStudyDate) {

@@ -113,9 +113,54 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
     const hwDonePct = homework.total ? Math.round(homework.done / homework.total * 100) : null;
     const gradeLabel = gradePct === null ? ',' : (gradePct >= 90 ? 'A+' : gradePct >= 80 ? 'A' : gradePct >= 70 ? 'B+' : gradePct >= 60 ? 'B' : gradePct >= 50 ? 'C' : 'D');
 
-    const gamification = typeof getData === 'function' ? getData().gamification || {} : {};
-    const streakNum = gamification.streak || 0;
-    const xpThisWeek = gamification.xp || 0;
+    // Firestore single source of truth for XP/streak. Never show a local-only
+    // zero without attempting a cloud read first: render a neutral placeholder,
+    // then replace with cloud values. Local cache is fallback only.
+    let streakNum = '…';
+    let xpThisWeek = '…';
+    try {
+        if (typeof getStudyHubContext === 'function' && uid) {
+            try {
+                const _dctx = await getStudyHubContext(uid);
+                if (_dctx && typeof _dctx.totalXP === 'number') {
+                    streakNum = (_dctx.displayStreak != null ? _dctx.displayStreak : (_dctx.computedStreak || 0));
+                    xpThisWeek = _dctx.totalXP;
+                    try {
+                        if (typeof shSyncLocalCacheFromCtx === 'function') { /* studyHub helper when present */ }
+                        // Overwrite local cache so a later offline read matches cloud.
+                        if (typeof getData === 'function' && typeof localStorage !== 'undefined') {
+                            const _cur = getData();
+                            const _badges = Array.isArray(_dctx.earnedBadges) ? _dctx.earnedBadges : ((_cur.gamification && _cur.gamification.badges) || []);
+                            let _focusCount = 0;
+                            try { _focusCount = (_dctx.recentActivity || []).filter(a => a && a.type === 'focus').length; } catch (e) {}
+                            try {
+                                localStorage.setItem('studyos-data', JSON.stringify({
+                                    ..._cur,
+                                    gamification: {
+                                        ..._cur.gamification,
+                                        xp: _dctx.totalXP,
+                                        streak: streakNum,
+                                        lastStudyDate: _dctx.focusTodayDayKey || _cur.gamification.lastStudyDate,
+                                        badges: _badges,
+                                        focusSessions: _focusCount
+                                    }
+                                }));
+                            } catch (e) {}
+                        }
+                    } catch (e) {}
+                }
+            } catch (e) { /* fall through to local fallback below */ }
+        }
+        if (streakNum === '…' || xpThisWeek === '…') {
+            const gamification = typeof getData === 'function' ? getData().gamification || {} : {};
+            streakNum = gamification.streak || 0;
+            xpThisWeek = gamification.xp || 0;
+        }
+    } catch (e) {
+        const gamification = typeof getData === 'function' ? getData().gamification || {} : {};
+        streakNum = gamification.streak || 0;
+        xpThisWeek = gamification.xp || 0;
+    }
 
     container.innerHTML = `
         <div class="flex-col">

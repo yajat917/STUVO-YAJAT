@@ -45,8 +45,11 @@ function saveData(partial) {
 }
 
 function addXP(amount) {
+    // LEGACY local-cache mirror only — Firestore is the source of truth.
+    // Kept for offline fallback and for call sites not yet migrated.
+    // Cloud-derived values overwrite this cache via shSyncLocalCacheFromCtx().
     const d = getData();
-    const today = new Date().toISOString().split('T')[0];
+    const today = (typeof shIstToday === 'function') ? shIstToday() : new Date().toISOString().split('T')[0];
     let { streak, lastStudyDate, xp, badges } = d.gamification;
     if (lastStudyDate) {
         const diff = Math.floor((new Date(today) - new Date(lastStudyDate)) / 86400000);
@@ -75,48 +78,113 @@ function shSubjectOptions(subjects, selected) {
         return '<option value="' + esc + '"' + (s === selected ? ' selected' : '') + '>' + esc + '</option>';
     }).join('');
 }
-// Local calendar day (YYYY-MM-DD). Focus history is keyed by day, so local
-// time is used instead of UTC to avoid off-by-one around midnight.
+// IST calendar day (YYYY-MM-DD). Focus history and all cloud grouping use
+// Asia/Kolkata so two devices in different timezones still agree.
+// Local legacy helper shTodayStr is kept for reading old local keys only.
 function shTodayStr(d) {
     var t = d instanceof Date ? d : new Date();
     var m = String(t.getMonth() + 1).padStart(2, '0');
     var day = String(t.getDate()).padStart(2, '0');
     return t.getFullYear() + '-' + m + '-' + day;
 }
-// Best-effort mirror of a focus session into Firestore studyActivity so the
-// Track tab (Weekly Stats / recentActivity) sees focus time on any device.
-// Local localStorage save is the source of truth; failures here never block it.
-function shMirrorFocusToActivity(durationMinutes) {
+function shIstToday(d) {
+    try {
+        if (typeof istDayKey === 'function') return istDayKey(d instanceof Date ? d : new Date());
+        if (typeof XpFromActivity !== 'undefined' && XpFromActivity && XpFromActivity.istDayKey) {
+            return XpFromActivity.istDayKey(d instanceof Date ? d : new Date());
+        }
+    } catch (e) {}
+    try {
+        return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d instanceof Date ? d : new Date());
+    } catch (e2) {}
+    return shTodayStr(d);
+}
+// Awaited Firestore write shared by all XP-bearing actions.
+// Returns the new doc id on success, null on failure. Never throws.
+async function shWriteActivity(payload) {
     try {
         var uid = (typeof appState !== 'undefined' && appState.user && appState.user.uid) ? appState.user.uid : null;
-        if (!uid) return;
-        if (typeof db === 'undefined' || !db) return;
-        if (typeof collection !== 'function' || typeof addDoc !== 'function') return;
-        var mins = Math.max(1, Math.floor(Number(durationMinutes) || 0));
-        if (!(mins >= 1)) return;
-        var payload = { type: 'focus', subject: 'General', durationMinutes: mins, relatedHomeworkId: null, relatedClassId: null };
+        if (!uid) return null;
+        if (typeof db === 'undefined' || !db) return null;
+        if (typeof collection !== 'function' || typeof addDoc !== 'function') return null;
+        var full = {
+            type: payload.type || 'focus',
+            subject: payload.subject || 'General',
+            durationMinutes: Math.max(1, Math.floor(Number(payload.durationMinutes) || 0)),
+            relatedHomeworkId: payload.relatedHomeworkId || null,
+            relatedClassId: payload.relatedClassId || null
+        };
+        if (typeof payload.xp === 'number' && payload.xp > 0) full.xp = Math.floor(payload.xp);
         try {
-            if (typeof serverTimestamp === 'function') payload.completedAt = serverTimestamp();
-            else payload.completedAt = new Date().toISOString();
-        } catch (e) { payload.completedAt = new Date().toISOString(); }
-        try { window._shTrackDirty = true; } catch (e) {}
-        addDoc(collection(db, 'users', uid, 'studyActivity'), payload).then(function () {
-            try { _shCtx = null; if (typeof resetStudyHubContext === 'function') resetStudyHubContext(); } catch (e) {}
-            try { window._shTrackDirty = true; } catch (e) {}
-        }).catch(function () {});
+            if (typeof serverTimestamp === 'function') full.completedAt = serverTimestamp();
+            else full.completedAt = new Date().toISOString();
+        } catch (e) { full.completedAt = new Date().toISOString(); }
+        try { window._shTrackDirty = true; } catch (e2) {}
+        var ref = await addDoc(collection(db, 'users', uid, 'studyActivity'), full);
+        try { _shCtx = null; if (typeof resetStudyHubContext === 'function') resetStudyHubContext(); } catch (e3) {}
+        try { window._shTrackDirty = true; } catch (e4) {}
+        return (ref && ref.id) ? ref.id : true;
+    } catch (e) { return null; }
+}
+// Firestore is the single source of truth. Local localStorage is strictly a
+// cache: this overwrites gamification with the latest cloud values, never the
+// other way around. Call after every successful cloud write and after every
+// fresh cloud read.
+function shSyncLocalCacheFromCtx(ctx) {
+    try {
+        if (!ctx || typeof ctx.totalXP !== 'number') return;
+        var cur = getData();
+        var focusCount = 0;
+        try {
+            focusCount = (ctx.recentActivity || []).filter(function (a) { return a && a.type === 'focus'; }).length;
+        } catch (e) {}
+        var badges = [];
+        try {
+            badges = Array.isArray(ctx.earnedBadges) ? ctx.earnedBadges.slice() : (cur.gamification.badges || []);
+        } catch (e2) { badges = cur.gamification.badges || []; }
+        saveData({
+            gamification: {
+                ...cur.gamification,
+                xp: ctx.totalXP,
+                streak: (ctx.displayStreak != null ? ctx.displayStreak : (ctx.computedStreak || 0)),
+                lastStudyDate: ctx.focusTodayDayKey || shIstToday(),
+                badges: badges,
+                focusSessions: focusCount
+            }
+        });
     } catch (e) {}
 }
-// Re-render Track progress + charts when focus data changed since Track was
-// last rendered. Merges localStorage so it works even before Firestore sync.
-function shRefreshTrack(container) {
+// Focus session write: Firestore first (awaited), local cache second.
+// Returns true only when the cloud write completed.
+async function shMirrorFocusToActivity(durationMinutes, xpAwarded) {
+    var mins = Math.max(1, Math.floor(Number(durationMinutes) || 0));
+    if (!(mins >= 1)) return false;
+    var xp = (typeof xpAwarded === 'number' && xpAwarded > 0) ? Math.floor(xpAwarded) : mins;
+    var id = await shWriteActivity({ type: 'focus', subject: 'General', durationMinutes: mins, xp: xp });
+    return !!id;
+}
+// Re-render Track progress + charts from Firestore (single source of truth).
+// Fetches a fresh context (bypassing the 5-min cache after writes) so Device B
+// sees Device A's session immediately after refresh.
+async function shRefreshTrack(container) {
     try {
         var ctx = null;
-        try { ctx = (typeof window !== 'undefined' && window.studyHubContext && window.studyHubContext.uid) ? window.studyHubContext : (container && container._shCtx ? container._shCtx : null); } catch (e) {}
+        try {
+            if (typeof ensureStudyHubContext === 'function') {
+                try { _shCtx = null; if (typeof resetStudyHubContext === 'function') resetStudyHubContext(); } catch (e) {}
+                ctx = await ensureStudyHubContext();
+            }
+        } catch (e) {}
+        if (!ctx) {
+            try { ctx = (typeof window !== 'undefined' && window.studyHubContext && window.studyHubContext.uid) ? window.studyHubContext : (container && container._shCtx ? container._shCtx : null); } catch (e2) {}
+        }
         if (!ctx && container && container._shCtx) ctx = container._shCtx;
         if (!ctx) return;
+        try { container._shCtx = ctx; } catch (e3) {}
+        try { shSyncLocalCacheFromCtx(ctx); } catch (e4) {}
         if (typeof loadTrackProgress === 'function') loadTrackProgress(container, ctx);
-        if (typeof refreshTrackCharts === 'function') refreshTrackCharts(container);
-        try { window._shTrackDirty = false; } catch (e) {}
+        if (typeof refreshTrackCharts === 'function') refreshTrackCharts(container, ctx);
+        try { window._shTrackDirty = false; } catch (e5) {}
     } catch (e) {}
 }
 function getHealthStatusConfig(status) {
@@ -791,10 +859,11 @@ function renderStudentStudyHub(container, params = {}) {
 // TODAY — Next Best Action + Streak + Focus Mode
 // ══════════════════════════════════════════════════════════════
 function bindToday(container, ctx) {
-    // Streak orb (from shared context — no independent query)
+    // Streak orb — Firestore-derived (single source of truth). displayStreak
+    // prefers the computed consecutive-day streak; legacy doc is fallback.
     var streakBody = container.querySelector('#streak-body');
     if (streakBody) {
-        var n = ctx.currentStreak || 0;
+        var n = (ctx.displayStreak != null ? ctx.displayStreak : (ctx.computedStreak != null ? ctx.computedStreak : (ctx.currentStreak || 0)));
         streakBody.innerHTML = `
             <div style="display:inline-flex;flex-direction:column;align-items:center;gap:6px;">
                 <div style="width:110px;height:110px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -849,24 +918,54 @@ function bindToday(container, ctx) {
     }
 
     // Focus Mode (preserved: flexible session styles from accessibility prefs)
-    var d = getData();
-    var today = shTodayStr();
-    var todaySessions = (d.focusHistory || []).filter(function (h) { return h.date === today; });
-    function paintFocusBase() {
+    // Firestore is the source of truth for all four values below.
+    // paintFocusBase tries the shared cloud context first; localStorage is
+    // only an offline fallback and is overwritten by cloud on success.
+    function paintFocusBaseFromCtx(liveCtx) {
         var tc = container.querySelector('#focus-today-count');
         var tt = container.querySelector('#focus-today-time');
         var xpEl = container.querySelector('#focus-xp');
         var bd = container.querySelector('#focus-badges');
-        var dd = getData();
-        var freshDay = shTodayStr();
-        var daySessions = (dd.focusHistory || []).filter(function (h) { return h.date === freshDay; });
-        if (tc) tc.textContent = daySessions.length;
-        if (tt) tt.textContent = daySessions.reduce(function (s, h) { return s + (Number(h.duration) || 0); }, 0) + 'm';
-        if (xpEl) xpEl.textContent = dd.gamification.xp + ' XP';
+        var c = liveCtx || ctx;
+        var hasCloud = !!(c && typeof c.totalXP === 'number');
+        var count = hasCloud ? (c.focusTodaySessions || 0) : 0;
+        var mins = hasCloud ? (c.focusTodayMinutes || 0) : 0;
+        var xp = hasCloud ? (c.totalXP || 0) : 0;
+        var badges = hasCloud ? (c.earnedBadges || []) : [];
+        if (!hasCloud) {
+            try {
+                var dd = getData();
+                var ist = (typeof shIstToday === 'function') ? shIstToday() : shTodayStr();
+                var localDay = shTodayStr();
+                var daySessions = (dd.focusHistory || []).filter(function (h) { return h && (h.date === ist || h.date === localDay); });
+                count = daySessions.length;
+                mins = daySessions.reduce(function (s, h) { return s + (Number(h.duration) || 0); }, 0);
+                xp = (dd.gamification && dd.gamification.xp) || 0;
+                badges = (dd.gamification && dd.gamification.badges) || [];
+            } catch (e) {}
+        }
+        if (tc) tc.textContent = count;
+        if (tt) tt.textContent = mins + 'm';
+        if (xpEl) xpEl.textContent = xp + ' XP';
         if (bd) bd.innerHTML = BADGES_DEF.map(function (b) {
-            var earned = dd.gamification.badges.includes(b.id);
+            var earned = badges.indexOf(b.id) !== -1;
             return '<span class="badge ' + (earned ? 'badge-violet' : 'badge-gray') + '" title="' + (earned ? 'Earned!' : b.xpRequired + ' XP needed') + '">' + b.name + '</span>';
         }).join('');
+    }
+    function paintFocusBase() {
+        paintFocusBaseFromCtx(ctx);
+        // Opportunistically refresh from Firestore so a second device that
+        // just signed in replaces any stale local cache immediately.
+        try {
+            if (typeof ensureStudyHubContext === 'function') {
+                ensureStudyHubContext().then(function (fresh) {
+                    if (fresh && fresh.uid) {
+                        try { shSyncLocalCacheFromCtx(fresh); } catch (e) {}
+                        paintFocusBaseFromCtx(fresh);
+                    }
+                }).catch(function () {});
+            }
+        } catch (e) {}
     }
     paintFocusBase();
     // ── Custom timer presets (Self-Study Zone — private to this student) ──
@@ -1026,20 +1125,45 @@ function bindToday(container, ctx) {
         }
         if (focusSecondsLeft <= 1) {
             if (focusPhase === 'work') {
-                const dd = getData();
-                const dur = WORK / 60;
-                const focusDay = shTodayStr();
-                const history = [...(dd.focusHistory || []), { date: focusDay, duration: dur }];
-                saveData({ focusHistory: history, gamification: { ...dd.gamification, focusSessions: (dd.gamification.focusSessions || 0) + 1 } });
-                addXP(_dur.xp || 25);
-                shMirrorFocusToActivity(dur);
+                // Firestore first (awaited): UI only assumes success after the
+                // cloud write completes. Local cache is updated second.
+                (async function () {
+                    var dur = WORK / 60;
+                    var xpAward = (_dur.xp || 25);
+                    // Custom preset: pro-rate from the standard rate.
+                    if (focusPresetOverrideMin) {
+                        var baseRate = (_dur.xp || 25) / ((getFocusDurations().WORK / 60) || 25);
+                        xpAward = Math.max(1, Math.floor(dur * baseRate));
+                    }
+                    var ok = await shMirrorFocusToActivity(dur, xpAward);
+                    if (ok) {
+                        try {
+                            var fresh = await ensureStudyHubContext();
+                            try { shSyncLocalCacheFromCtx(fresh); } catch (e) {}
+                            try { container._shCtx = fresh; } catch (e2) {}
+                            paintFocusBaseFromCtx(fresh);
+                        } catch (e) { paintFocusBase(); }
+                        showToast(`Focus session complete! Take a ${BREAK_TIME / 60}-min break. +${xpAward} XP 🎉`, 'success');
+                        shRefreshTrack(container);
+                    } else {
+                        // Offline: keep a local-only entry so nothing is lost;
+                        // it reconciles on the next successful cloud read.
+                        try {
+                            var dd = getData();
+                            var focusDay = (typeof shIstToday === 'function') ? shIstToday() : shTodayStr();
+                            var history = [...(dd.focusHistory || []), { date: focusDay, duration: dur }];
+                            saveData({ focusHistory: history });
+                            addXP(xpAward);
+                        } catch (e) {}
+                        showToast('Saved locally (offline): will sync when online ✅', 'info');
+                        paintFocusBase();
+                    }
+                })();
                 try { window._shTrackDirty = true; } catch (e) {}
                 focusSessionStartEpoch = null; focusPauseEpoch = null;
                 focusPhase = 'break'; focusSecondsLeft = BREAK_TIME;
                 gentleReminderDone = false;
-                showToast(`Focus session complete! Take a ${BREAK_TIME / 60}-min break. +${_dur.xp || 25} XP 🎉`, 'success');
-                paintFocusBase();
-                shRefreshTrack(container);
+                updateFocusDisplay(); return;
             } else { focusPhase = 'work'; focusSecondsLeft = WORK; gentleReminderDone = false; focusSessionStartEpoch = Date.now(); focusPauseEpoch = null; }
             updateFocusDisplay(); return;
         }
@@ -1090,6 +1214,7 @@ function bindToday(container, ctx) {
     container.querySelector('#focus-reset')?.addEventListener('click', () => {
         // Partial-session save: real elapsed work time must never be discarded.
         // Only the work phase counts; idle/break resets save nothing.
+        // Firestore write is awaited before the UI assumes success.
         if (focusPhase === 'work') {
             const tickMinutes = Math.floor((WORK - focusSecondsLeft) / 60);
             // Prefer wall-clock (immune to background-tab throttle); fall back
@@ -1099,18 +1224,31 @@ function bindToday(container, ctx) {
             const wallMinutes = focusSessionStartEpoch ? Math.floor((wallEnd - focusSessionStartEpoch) / 60000) : 0;
             const elapsedMinutes = focusSessionStartEpoch ? wallMinutes : tickMinutes;
             if (elapsedMinutes >= 1) {
-                const dd = getData();
-                const history = [...(dd.focusHistory || []), { date: shTodayStr(), duration: elapsedMinutes, partial: true }];
-                const saved = saveData({ focusHistory: history, gamification: { ...dd.gamification, focusSessions: (dd.gamification.focusSessions || 0) + 1 } });
-                if (saved) {
+                (async function () {
                     const rate = (_dur.xp || 25) / (WORK / 60);
-                    addXP(Math.max(1, Math.floor(elapsedMinutes * rate)));
-                    shMirrorFocusToActivity(elapsedMinutes);
-                    try { window._shTrackDirty = true; } catch (e) {}
-                    showToast(`Partial session saved: ${elapsedMinutes}m counted ✅`, 'success');
-                    paintFocusBase();
-                    shRefreshTrack(container);
-                }
+                    const xpAward = Math.max(1, Math.floor(elapsedMinutes * rate));
+                    const ok = await shMirrorFocusToActivity(elapsedMinutes, xpAward);
+                    if (ok) {
+                        try {
+                            const fresh = await ensureStudyHubContext();
+                            try { shSyncLocalCacheFromCtx(fresh); } catch (e) {}
+                            try { container._shCtx = fresh; } catch (e2) {}
+                            paintFocusBaseFromCtx(fresh);
+                        } catch (e) { paintFocusBase(); }
+                        showToast(`Partial session saved: ${elapsedMinutes}m counted ✅`, 'success');
+                        shRefreshTrack(container);
+                    } else {
+                        try {
+                            const dd = getData();
+                            const dayKey = (typeof shIstToday === 'function') ? shIstToday() : shTodayStr();
+                            const history = [...(dd.focusHistory || []), { date: dayKey, duration: elapsedMinutes, partial: true }];
+                            saveData({ focusHistory: history });
+                            addXP(xpAward);
+                        } catch (e) {}
+                        showToast('Saved locally (offline): will sync when online ✅', 'info');
+                        paintFocusBase();
+                    }
+                })();
             }
         }
         clearInterval(focusInterval); try { window._shFocusInterval = null; } catch {} window._focusRunning = false; focusPhase = 'idle'; focusSecondsLeft = WORK; focusSessionStartEpoch = null; focusPauseEpoch = null;
@@ -1167,7 +1305,10 @@ function bindLearn(container, ctx) {
                     doubtHistory.push({ role: 'assistant', content: data.answer, subject: lastUser.subject });
                     renderDoubtThread();
                     thread.scrollTop = thread.scrollHeight;
-                    addXP(5);
+                    // Firestore first (awaited, +5 XP variant preserves history rate).
+                    var _dOk = await shWriteActivity({ type: 'doubt_asked', subject: lastUser.subject || 'General', durationMinutes: 5, xp: 5 });
+                    if (_dOk) { try { var _dFresh = await ensureStudyHubContext(); try { shSyncLocalCacheFromCtx(_dFresh); } catch (e) {} } catch (e2) {} }
+                    else { try { addXP(5); } catch (e3) {} }
                 } catch (err) { showToast(err.message, 'error'); }
                 finally { btn.disabled = false; }
             });
@@ -1211,8 +1352,10 @@ function bindLearn(container, ctx) {
             loading.remove();
             doubtHistory.push({ role: 'assistant', content: data.answer, subject });
             renderDoubtThread();
-            addXP(10);
-            try { await addDoc(collection(db, 'users', appState.user.uid, 'studyActivity'), { type: 'doubt_asked', subject, durationMinutes: 5, relatedHomeworkId: null, relatedClassId: null, completedAt: serverTimestamp() }); } catch (e) {}
+            // Firestore first (awaited): +10 XP recorded in cloud so Device B sees it.
+            var _ok = await shWriteActivity({ type: 'doubt_asked', subject, durationMinutes: 5, xp: 10 });
+            if (_ok) { try { var _fresh = await ensureStudyHubContext(); try { shSyncLocalCacheFromCtx(_fresh); } catch (e) {} } catch (e2) {} }
+            else { try { addXP(10); } catch (e3) {} }
         } catch (err) { loading.remove(); showToast(err.message, 'error'); }
         finally { input.disabled = false; input.focus(); if (thread) thread.scrollTop = thread.scrollHeight; }
     });
@@ -1311,8 +1454,10 @@ function bindLearn(container, ctx) {
                     output.appendChild(btn);
                 }
             } catch {}
-            try { await addDoc(collection(db, 'users', appState.user.uid, 'studyActivity'), { type: 'revision', subject, durationMinutes: 15, relatedHomeworkId: null, relatedClassId: null, completedAt: serverTimestamp() }); } catch (e) {}
-            addXP(10);
+            // Firestore first (awaited): revision is +10 XP in the cloud.
+            var _rOk = await shWriteActivity({ type: 'revision', subject, durationMinutes: 15, xp: 10 });
+            if (_rOk) { try { var _rFresh = await ensureStudyHubContext(); try { shSyncLocalCacheFromCtx(_rFresh); } catch (e) {} } catch (e2) {} }
+            else { try { addXP(10); } catch (e3) {} }
         } catch (err) {
             output.innerHTML = '';
             showToast(err.message, 'error');
@@ -1393,12 +1538,17 @@ function bindPractice(container, ctx) {
             `;
             try {
                 const subject = container.querySelector('#quiz-subject-select')?.value || 'General';
-                addDoc(collection(db, 'users', appState.user.uid, 'quizHistory'), {
-                    subject, topic: subject, difficulty: container.querySelector('input[name="quiz-difficulty"]:checked')?.value || 'medium',
-                    questionHashes: quizHashes, score: quizScore, totalQuestions: quizQuestions.length, createdAt: serverTimestamp()
-                });
-                addXP(10);
-                _shCtx = null; if (typeof resetStudyHubContext === 'function') resetStudyHubContext();
+                // Firestore first (awaited): quiz is +10 XP via quizHistory in the cloud.
+                (async function () {
+                    try {
+                        await addDoc(collection(db, 'users', appState.user.uid, 'quizHistory'), {
+                            subject, topic: subject, difficulty: container.querySelector('input[name="quiz-difficulty"]:checked')?.value || 'medium',
+                            questionHashes: quizHashes, score: quizScore, totalQuestions: quizQuestions.length, createdAt: serverTimestamp()
+                        });
+                        _shCtx = null; if (typeof resetStudyHubContext === 'function') resetStudyHubContext();
+                        try { var _qFresh = await ensureStudyHubContext(); try { shSyncLocalCacheFromCtx(_qFresh); } catch (e) {} } catch (e2) {}
+                    } catch (e) { try { addXP(10); } catch (e3) {} }
+                })();
             } catch (e) {}
             out.querySelector('#quiz-retry')?.addEventListener('click', () => {
                 quizQuestions = [...quizQuestions].sort(() => Math.random() - 0.5);
@@ -1676,16 +1826,76 @@ async function loadTrackProgress(container, ctx) {
         }
     } catch (e) {}
     var totalPct = homeworkTotal ? Math.round(homeworkDone / homeworkTotal * 100) : 0;
-    // Focus time (localStorage source of truth) summarized over the last 7 days
-    // so the glance stays functional even when there is no homework yet.
+    // Focus this week — Firestore single source of truth, grouped by IST day.
+    // Local history is only a migration fallback when the cloud is empty
+    // (pre-fix users) or unreachable (offline).
     var focusWeekMinutes = 0, focusWeekSessions = 0;
+    function _istKey(v) {
+        try {
+            if (typeof istDayKey === 'function') {
+                var _dd = null;
+                try {
+                    if (v instanceof Date) _dd = v;
+                    else if (v && typeof v.toDate === 'function') _dd = v.toDate();
+                    else if (v && typeof v.seconds === 'number') _dd = new Date(v.seconds * 1000);
+                    else if (typeof v === 'string') _dd = new Date(v.length >= 10 && v.indexOf('T') === -1 ? v + 'T12:00:00' : v);
+                    else _dd = v;
+                } catch (e) { _dd = v; }
+                var _k = istDayKey(_dd);
+                if (_k) return _k;
+            }
+        } catch (e2) {}
+        try {
+            var _d2 = (v instanceof Date) ? v : new Date();
+            return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(_d2);
+        } catch (e3) {}
+        return shTodayStr(v instanceof Date ? v : new Date());
+    }
     try {
-        var weekKeys = {};
-        for (var wi = 6; wi >= 0; wi--) { var wdt = new Date(); wdt.setDate(wdt.getDate() - wi); weekKeys[shTodayStr(wdt)] = true; }
-        var fh = (typeof getData === 'function' ? getData().focusHistory : []) || [];
-        fh.forEach(function (h) {
-            if (h && h.date && weekKeys[h.date]) { focusWeekMinutes += (Number(h.duration) || 0); focusWeekSessions++; }
-        });
+        var _cloudWeek = null;
+        try {
+            if (typeof XpFromActivity !== 'undefined' && XpFromActivity && XpFromActivity.focusWeekMinutes) {
+                _cloudWeek = XpFromActivity.focusWeekMinutes(ctx.recentActivity || []);
+            }
+        } catch (e) { _cloudWeek = null; }
+        if (_cloudWeek) {
+            focusWeekMinutes = _cloudWeek.minutes || 0;
+            focusWeekSessions = _cloudWeek.sessions || 0;
+        } else {
+            // Inline cloud week calc (IST).
+            var _wk = {};
+            for (var _wi = 0; _wi < 7; _wi++) {
+                var _wdt = new Date(Date.now() - _wi * 86400000);
+                _wk[_istKey(_wdt)] = true;
+            }
+            (ctx.recentActivity || []).forEach(function (a) {
+                if (!a || a.type !== 'focus') return;
+                var _av = a.completedAt || a.createdAt;
+                var _d = null;
+                try {
+                    if (_av && typeof _av.toDate === 'function') _d = _av.toDate();
+                    else if (_av instanceof Date) _d = _av;
+                    else if (_av && typeof _av.seconds === 'number') _d = new Date(_av.seconds * 1000);
+                    else if (typeof _av === 'string') _d = new Date(_av);
+                } catch (e2) {}
+                if (!_d) return;
+                if (!_wk[_istKey(_d)]) return;
+                var _m = Math.floor(Number(a.durationMinutes) || 0);
+                if (_m > 0) { focusWeekMinutes += _m; focusWeekSessions += 1; }
+            });
+        }
+        // Migration fallback: if cloud is empty but this device has local
+        // pre-fix history, show it so nothing appears lost. Cloud wins always.
+        if ((ctx.recentActivity || []).length === 0) {
+            try {
+                var _wk2 = {};
+                for (var wi2 = 6; wi2 >= 0; wi2--) { var wdt2 = new Date(); wdt2.setDate(wdt2.getDate() - wi2); _wk2[shTodayStr(wdt2)] = true; }
+                var fh = (typeof getData === 'function' ? getData().focusHistory : []) || [];
+                fh.forEach(function (h) {
+                    if (h && h.date && _wk2[h.date]) { focusWeekMinutes += (Number(h.duration) || 0); focusWeekSessions++; }
+                });
+            } catch (e2) {}
+        }
     } catch (e) {}
     if (host) {
         host.innerHTML = `
@@ -1720,23 +1930,24 @@ async function loadTrackProgress(container, ctx) {
                 <div style="font-size:11px;color:var(--text-dim);">Includes Pomodoro time from Today: stays in sync automatically.</div>
             </div>`;
     }
-    // Weekly stats: shared context's recent activity + local focus history.
-    // Focus sessions previously never reached here (localStorage only), which
-    // is why focus-only users always saw 0m.
+    // Weekly stats: Firestore single source of truth, grouped by IST day.
+    // Local history merges only as an unsynced remainder (migration/offline).
     if (statsHost) {
         var byDay = {};
         for (var i = 6; i >= 0; i--) {
-            var dt = new Date(); dt.setDate(dt.getDate() - i);
-            byDay[shTodayStr(dt)] = 0;
+            var dt = new Date(Date.now() - i * 86400000);
+            byDay[_istKey(dt)] = 0;
         }
         (ctx.recentActivity || []).forEach(function (a) {
-            var v = a.completedAt;
+            var v = a.completedAt || a.createdAt;
             var day = null;
             try {
-                if (v && typeof v.toDate === 'function') day = shTodayStr(v.toDate());
-                else if (v instanceof Date) day = shTodayStr(v);
-                else if (v && typeof v.seconds === 'number') day = shTodayStr(new Date(v.seconds * 1000));
-                else if (typeof v === 'string' && v.length >= 10) day = v.slice(0, 10);
+                var _dv = null;
+                if (v && typeof v.toDate === 'function') _dv = v.toDate();
+                else if (v instanceof Date) _dv = v;
+                else if (v && typeof v.seconds === 'number') _dv = new Date(v.seconds * 1000);
+                else if (typeof v === 'string' && v.length >= 10) _dv = new Date(v.indexOf('T') === -1 ? v + 'T12:00:00' : v);
+                if (_dv) day = _istKey(_dv);
             } catch (e) {}
             if (day && byDay[day] !== undefined) byDay[day] += (Number(a.durationMinutes) || 0);
         });
@@ -1759,12 +1970,14 @@ async function loadTrackProgress(container, ctx) {
                 if (!a || a.type !== 'focus') return;
                 var mins = Number(a.durationMinutes) || 0;
                 if (!(mins > 0)) return;
-                var av = a.completedAt, aday = null;
+                var av = a.completedAt || a.createdAt, aday = null;
                 try {
-                    if (av && typeof av.toDate === 'function') aday = shTodayStr(av.toDate());
-                    else if (av instanceof Date) aday = shTodayStr(av);
-                    else if (av && typeof av.seconds === 'number') aday = shTodayStr(new Date(av.seconds * 1000));
-                    else if (typeof av === 'string' && av.length >= 10) aday = av.slice(0, 10);
+                    var _avd = null;
+                    if (av && typeof av.toDate === 'function') _avd = av.toDate();
+                    else if (av instanceof Date) _avd = av;
+                    else if (av && typeof av.seconds === 'number') _avd = new Date(av.seconds * 1000);
+                    else if (typeof av === 'string' && av.length >= 10) _avd = new Date(av.indexOf('T') === -1 ? av + 'T12:00:00' : av);
+                    if (_avd) aday = _istKey(_avd);
                 } catch (e) {}
                 if (!aday || byDay[aday] === undefined) return;
                 var k2 = aday + '|' + mins;
@@ -1785,22 +1998,67 @@ async function loadTrackProgress(container, ctx) {
     }
 }
 
-function initTrackCharts(container) {
+function initTrackCharts(container, passedCtx) {
+    function istKeyFor(v) {
+        try {
+            if (typeof istDayKey === 'function') {
+                var _dd = null;
+                if (v instanceof Date) _dd = v;
+                else if (v && typeof v.toDate === 'function') _dd = v.toDate();
+                else if (v && typeof v.seconds === 'number') _dd = new Date(v.seconds * 1000);
+                else if (typeof v === 'string') _dd = new Date(v.indexOf('T') === -1 ? v + 'T12:00:00' : v);
+                else _dd = v;
+                var _k = istDayKey(_dd);
+                if (_k) return _k;
+            }
+        } catch (e) {}
+        return null;
+    }
     function initCharts() {
         if (typeof Chart === 'undefined') { setTimeout(initCharts, 500); return; }
-        // Charts merge manual study logs with Pomodoro focus history.
-        // studyLogs is never written in Stuvo (always []), so without this
-        // merge focus-only users always saw empty charts.
+        // Firestore single source of truth: derive focus days from
+        // ctx.recentActivity (IST). Local history merges only when cloud is
+        // empty (migration) or as an unsynced remainder.
+        var liveCtx = passedCtx || null;
+        try {
+            if (!liveCtx) {
+                if (typeof window !== 'undefined' && window.studyHubContext && window.studyHubContext.uid) liveCtx = window.studyHubContext;
+                else if (container && container._shCtx) liveCtx = container._shCtx;
+            }
+        } catch (e) {}
         const d = getData();
         const logs = d.studyLogs || [];
         const focusHistory = d.focusHistory || [];
         var focusByDate = {};
-        focusHistory.forEach(function (h) {
-            if (!h || !h.date) return;
-            var mins = Number(h.duration) || 0;
-            if (!(mins > 0)) return;
-            focusByDate[h.date] = (focusByDate[h.date] || 0) + mins;
-        });
+        var cloudHasFocus = false;
+        try {
+            (liveCtx && liveCtx.recentActivity ? liveCtx.recentActivity : []).forEach(function (a) {
+                if (!a || a.type !== 'focus') return;
+                var mins = Number(a.durationMinutes) || 0;
+                if (!(mins > 0)) return;
+                var dt = null;
+                try {
+                    var _v = a.completedAt || a.createdAt;
+                    if (_v && typeof _v.toDate === 'function') dt = _v.toDate();
+                    else if (_v instanceof Date) dt = _v;
+                    else if (_v && typeof _v.seconds === 'number') dt = new Date(_v.seconds * 1000);
+                    else if (typeof _v === 'string') dt = new Date(_v.indexOf('T') === -1 ? _v + 'T12:00:00' : _v);
+                } catch (e) {}
+                if (!dt) return;
+                var k = istKeyFor(dt);
+                if (!k) return;
+                focusByDate[k] = (focusByDate[k] || 0) + mins;
+                cloudHasFocus = true;
+            });
+        } catch (e) {}
+        if (!cloudHasFocus) {
+            focusHistory.forEach(function (h) {
+                if (!h || !h.date) return;
+                var mins = Number(h.duration) || 0;
+                if (!(mins > 0)) return;
+                focusByDate[h.date] = (focusByDate[h.date] || 0) + mins;
+            });
+        }
         var logHoursByDate = {};
         var logTotals = {};
         logs.forEach(function (l) {
@@ -1856,18 +2114,24 @@ function initTrackCharts(container) {
     } else { initCharts(); }
 }
 
-// Rebuild Track charts from current localStorage (called after focus saves
-// and when returning to the Track tab). Safe to call repeatedly: existing
-// Chart instances are destroyed first, so no leak or double-draw.
-function refreshTrackCharts(container) {
+// Rebuild Track charts from Firestore (single source of truth). Safe to call
+// repeatedly: existing Chart instances are destroyed first.
+function refreshTrackCharts(container, passedCtx) {
     try {
         if (typeof Chart === 'undefined') return;
         var lineEl = container ? container.querySelector('#line-chart') : null;
         var pieEl = container ? container.querySelector('#pie-chart') : null;
         if (!lineEl && !pieEl) return;
+        var live = passedCtx || null;
+        try {
+            if (!live) {
+                if (typeof window !== 'undefined' && window.studyHubContext && window.studyHubContext.uid) live = window.studyHubContext;
+                else if (container && container._shCtx) live = container._shCtx;
+            }
+        } catch (e) {}
         // Reuse the same merge logic by delegating to initTrackCharts, which
         // now destroys previous instances before recreating.
-        initTrackCharts(container);
+        initTrackCharts(container, live);
     } catch (e) {}
 }
 
@@ -2059,7 +2323,8 @@ function bindPlan(container, ctx) {
                             + '</div>';
                         out.querySelector('#exam-rev-close')?.addEventListener('click', function () { out.innerHTML = ''; });
                         try { if (typeof createTTSButtonForText === 'function') { var btn = createTTSButtonForText(function () { return out.textContent || ''; }); btn.style.marginTop = '10px'; out.querySelector('.glass-card').appendChild(btn); } } catch (e) {}
-                        try { await addDoc(collection(db, 'users', uid, 'studyActivity'), { type: 'revision', subject: subj, durationMinutes: 15, relatedHomeworkId: null, relatedClassId: null, completedAt: serverTimestamp() }); } catch (e) {}
+                        var _erOk = await shWriteActivity({ type: 'revision', subject: subj, durationMinutes: 15, xp: 10 });
+                        if (_erOk) { try { var _erFresh = await ensureStudyHubContext(); try { shSyncLocalCacheFromCtx(_erFresh); } catch (e2) {} } catch (e3) {} }
                     } catch (e) { out.innerHTML = '<div class="glass-card" style="padding:14px;"><div style="font-size:13px;color:#FCA5A5;">Could not generate revision: ' + shEsc(e.message || '') + '</div><button class="btn btn-secondary btn-sm" id="exam-rev-close2" style="margin-top:10px;">Close</button></div>'; out.querySelector('#exam-rev-close2')?.addEventListener('click', function () { out.innerHTML = ''; }); }
                 });
             });
@@ -2184,7 +2449,7 @@ function bindPlan(container, ctx) {
                 </div>
                 <div>
                     <div style="font-size:12px;color:var(--text-dim);font-weight:600;">Day streak</div>
-                    <div style="font-size:16px;font-weight:700;">🔥 ${ctx.currentStreak || 0}</div>
+                    <div style="font-size:16px;font-weight:700;">🔥 ${(ctx.displayStreak != null ? ctx.displayStreak : (ctx.computedStreak != null ? ctx.computedStreak : (ctx.currentStreak || 0)))}</div>
                 </div>
             </div>
             <div style="font-size:12px;color:var(--text-dim);font-weight:600;margin:12px 0 6px;">My subjects (${(ctx.subjects || []).length})</div>

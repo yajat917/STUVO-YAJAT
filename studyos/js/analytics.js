@@ -1,13 +1,30 @@
 const marks = { Math: 65, Physics: 75, Chemistry: 90 };
 
 document.addEventListener("DOMContentLoaded", () => {
+  paintAnalytics(null);
+  // Firestore first: when signed in, cloud values overwrite the local cache
+  // so Device B shows the same history as Device A.
+  try {
+    if (typeof window !== 'undefined' && window.StuvoCloud) {
+      window.StuvoCloud.readCloud().then(function (cloud) {
+        if (cloud && typeof cloud.totalXP === 'number') {
+          try { window.StuvoCloud.syncCacheFromCloud(cloud); } catch (e) {}
+          paintAnalytics(cloud);
+        }
+      }).catch(function () {});
+    }
+  } catch (e) {}
+
+  renderMarksInputs();
+  document.getElementById("analyze-btn").addEventListener("click", runAnalysis);
+});
+
+function paintAnalytics(cloud) {
   const data = getData();
   const logs = data.studyLogs;
   const focusHistory = data.focusHistory || [];
 
-  // Focus history was previously ignored here, so focus-only users always
-  // saw 0h / empty charts even with consistent focus time on the Focus page.
-  // Merge it additively: existing studyLogs logic is untouched.
+  // Focus history merge (additive, existing logic untouched).
   const focusByDate = {};
   let focusTotalMinutes = 0;
   focusHistory.forEach((h) => {
@@ -17,12 +34,19 @@ document.addEventListener("DOMContentLoaded", () => {
     focusByDate[h.date] = (focusByDate[h.date] || 0) + mins;
     focusTotalMinutes += mins;
   });
+  // Firestore is the source of truth when it has data: headline XP and total
+  // focus minutes come from the cloud so Device B matches Device A.
+  var xpHeadline = data.gamification.xp;
+  if (cloud && typeof cloud.totalXP === 'number' && (cloud.activityCount || 0) > 0) {
+    xpHeadline = cloud.totalXP;
+    if (typeof cloud.totalFocusMinutes === 'number') focusTotalMinutes = cloud.totalFocusMinutes;
+  }
   const focusHoursTotal = Math.round((focusTotalMinutes / 60) * 100) / 100;
 
   const logsHours = logs.reduce((s, l) => s + (Number(l.hours) || 0), 0);
   const totalHours = logsHours + focusHoursTotal;
   document.getElementById("total-hours").textContent = totalHours.toFixed(1) + "h";
-  document.getElementById("xp").textContent = data.gamification.xp + " XP";
+  document.getElementById("xp").textContent = xpHeadline + " XP";
 
   const subjectTotals = {};
   logs.forEach((l) => {
@@ -105,10 +129,7 @@ document.addEventListener("DOMContentLoaded", () => {
       plugins: { legend: { labels: { color: "#94a3b8" } } },
     },
   });
-
-  renderMarksInputs();
-  document.getElementById("analyze-btn").addEventListener("click", runAnalysis);
-});
+}
 
 function renderMarksInputs() {
   const data = getData();
