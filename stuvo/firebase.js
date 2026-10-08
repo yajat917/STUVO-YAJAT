@@ -20,6 +20,7 @@ let serverTimestamp, arrayUnion, arrayRemove, orderBy, limit, Timestamp, onSnaps
 try {
     app = firebase.initializeApp(firebaseConfig);
     auth = firebase.auth();
+    try { auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
     db = firebase.firestore();
 
     GoogleAuthProvider = firebase.auth.GoogleAuthProvider;

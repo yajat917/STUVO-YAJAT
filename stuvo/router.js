@@ -5,6 +5,33 @@ const appState = {
     userData: null
 };
 
+// Auth restore gate: Firebase Auth LOCAL persistence restores asynchronously.
+// onAuthStateChanged fires once on page load with the real restored user (or
+// null if genuinely signed out). Never decide login-vs-app before that first
+// callback — appState.user is momentarily null, not signed out.
+let authReady = false;
+
+function renderAuthLoading() {
+    const authContainer = document.getElementById('auth-container');
+    const appLayout = document.getElementById('app-layout');
+    try { if (appLayout) appLayout.style.display = 'none'; } catch {}
+    if (!authContainer) return;
+    if (authContainer.dataset.loading === '1') return;
+    authContainer.dataset.loading = '1';
+    authContainer.style.display = 'flex';
+    authContainer.innerHTML = ''
+        + '<div style="text-align:center;padding:20px;animation:none;transition:none;">'
+        + '<div style="font-family:\'Sora\',sans-serif;font-weight:800;font-size:42px;color:#F4F2FF;letter-spacing:-1.5px;animation:none;transition:none;">Stuvo</div>'
+        + '</div>';
+}
+
+function clearAuthLoading() {
+    try {
+        const authContainer = document.getElementById('auth-container');
+        if (authContainer) delete authContainer.dataset.loading;
+    } catch {}
+}
+
 // Parse hash + query params
 function parseHash() {
     const full = window.location.hash || '#/login';
@@ -164,6 +191,7 @@ async function handleRoute() {
             if (appFooter) appFooter.style.display = 'none';
         } catch {}
         if (authContainer) {
+            try { delete authContainer.dataset.loading; } catch {}
             authContainer.style.display = 'flex';
             authContainer.innerHTML = '';
             try {
@@ -174,9 +202,27 @@ async function handleRoute() {
         return;
     }
 
+    if (!authReady) {
+        renderAuthLoading();
+        return;
+    }
+    clearAuthLoading();
+
     if (!appState.user && !authRoutes.has(path)) {
         window.location.hash = '#/login';
         return;
+    }
+
+    if (appState.user && authRoutes.has(path)) {
+        const _status = appState.userData && appState.userData.status;
+        if (!(path === '#/pending' && (_status === 'pending' || !appState.role))) {
+            if (_status === 'pending') {
+                if (path !== '#/pending') { window.location.hash = '#/pending'; return; }
+            } else if (appState.role && roleHome[appState.role]) {
+                window.location.hash = roleHome[appState.role];
+                return;
+            }
+        }
     }
 
     if (appState.user && !authRoutes.has(path)) {
@@ -566,6 +612,7 @@ onAuthStateChanged(auth, async (user) => {
             if (appState.userData && appState.userData.notificationPrefs) window._notificationPrefs = appState.userData.notificationPrefs;
             else if (appState.userData && appState.userData.accessibilityPrefs) window._notificationPrefs = appState.userData.accessibilityPrefs;
         } catch(e){}
+        authReady = true;
         handleRoute();
     } else {
         appState.user = null;
@@ -578,6 +625,7 @@ onAuthStateChanged(auth, async (user) => {
         const loggedOutLang = (typeof getCachedLang === 'function' ? getCachedLang() : null) || 'en';
         window.currentUserLanguage = loggedOutLang;
         try { if (typeof loadLanguage === 'function') loadLanguage(loggedOutLang).catch(()=>{}); } catch {}
+        authReady = true;
         handleRoute();
     }
 });
