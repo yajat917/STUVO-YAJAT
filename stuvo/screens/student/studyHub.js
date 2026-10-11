@@ -1094,9 +1094,30 @@ function bindToday(container, ctx) {
     let WORK = _dur.WORK, BREAK_TIME = _dur.BREAK;
     let focusPhase = 'idle', focusSecondsLeft = WORK, focusInterval = null;
     let gentleReminderDone = false;
-    // Wall-clock anchor: tick counting throttles in background tabs, so real
-    // elapsed time is measured from timestamps (pause gaps excluded).
+    // Timestamp-based timer: browsers throttle setInterval in background tabs,
+    // so remaining time is always derived from Date.now(), never from counting
+    // ticks. The 1s interval only triggers a redraw. focusSessionStartEpoch is
+    // the wall-clock anchor for the CURRENT phase (work or break); paused gaps
+    // are excluded via focusPauseEpoch. Both phases use the same mechanism.
     let focusSessionStartEpoch = null, focusPauseEpoch = null;
+
+    function getFocusPhaseDurationSec() {
+        if (focusPhase === 'break') return BREAK_TIME;
+        if (focusPhase === 'work') return WORK;
+        return 0;
+    }
+    function getFocusElapsedMs() {
+        if (!focusSessionStartEpoch) return (getFocusPhaseDurationSec() - focusSecondsLeft) * 1000;
+        return (focusPauseEpoch || Date.now()) - focusSessionStartEpoch;
+    }
+    function getFocusRemainingMs() {
+        return Math.max(0, getFocusPhaseDurationSec() * 1000 - getFocusElapsedMs());
+    }
+    function syncFocusClockToDisplay() {
+        if (focusPhase !== 'work' && focusPhase !== 'break') return;
+        if (!focusSessionStartEpoch || focusPauseEpoch) return;
+        focusSecondsLeft = Math.ceil(getFocusRemainingMs() / 1000);
+    }
     var badge = container.querySelector('#focus-style-badge');
     if (badge) badge.textContent = WORK / 60 + '/' + BREAK_TIME / 60 + ' min';
 
@@ -1119,7 +1140,10 @@ function bindToday(container, ctx) {
         ring.setAttribute('stroke', focusPhase === 'break' ? '#10B981' : '#7C5CFC');
     }
     function focusTick() {
-        if (_dur.labelWork === 'Flexible Focus' && focusPhase === 'work' && !gentleReminderDone && (WORK - focusSecondsLeft) === 25 * 60) {
+        // Derive time from wall-clock first: correct even if the browser
+        // throttled/skipped ticks while the tab was backgrounded.
+        syncFocusClockToDisplay();
+        if (_dur.labelWork === 'Flexible Focus' && focusPhase === 'work' && !gentleReminderDone && (WORK - focusSecondsLeft) >= 25 * 60) {
             gentleReminderDone = true;
             showToast('You’ve been focused for 25 min: keep going or take a gentle pause if you need 🌿', 'info');
         }
@@ -1160,14 +1184,17 @@ function bindToday(container, ctx) {
                     }
                 })();
                 try { window._shTrackDirty = true; } catch (e) {}
-                focusSessionStartEpoch = null; focusPauseEpoch = null;
                 focusPhase = 'break'; focusSecondsLeft = BREAK_TIME;
                 gentleReminderDone = false;
+                // Anchor the break phase to wall-clock, identically to work.
+                focusSessionStartEpoch = Date.now(); focusPauseEpoch = null;
                 updateFocusDisplay(); return;
             } else { focusPhase = 'work'; focusSecondsLeft = WORK; gentleReminderDone = false; focusSessionStartEpoch = Date.now(); focusPauseEpoch = null; }
             updateFocusDisplay(); return;
         }
-        focusSecondsLeft--;
+        // Fallback only when no wall-clock anchor exists; normally the sync
+        // above already set the correct value so this is a no-op path.
+        if (!focusSessionStartEpoch) focusSecondsLeft--;
         updateFocusDisplay();
     }
     function refreshFocusDurations() {
@@ -1204,7 +1231,9 @@ function bindToday(container, ctx) {
         updateFocusDisplay();
     });
     container.querySelector('#focus-pause')?.addEventListener('click', () => {
-        if (focusPhase === 'work' && focusSessionStartEpoch && !focusPauseEpoch) focusPauseEpoch = Date.now();
+        // Pause freezes wall-clock for work AND break identically: the anchor
+        // stays fixed while focusPauseEpoch marks the pause moment.
+        if ((focusPhase === 'work' || focusPhase === 'break') && focusSessionStartEpoch && !focusPauseEpoch) focusPauseEpoch = Date.now();
         window._focusRunning = false; clearInterval(focusInterval);
         try { window._shFocusInterval = null; } catch {}
         container.querySelector('#focus-start').classList.remove('hidden');
@@ -1216,13 +1245,10 @@ function bindToday(container, ctx) {
         // Only the work phase counts; idle/break resets save nothing.
         // Firestore write is awaited before the UI assumes success.
         if (focusPhase === 'work') {
-            const tickMinutes = Math.floor((WORK - focusSecondsLeft) / 60);
-            // Prefer wall-clock (immune to background-tab throttle); fall back
-            // to tick count only if no anchor exists. Paused gaps excluded.
-            // If paused at reset press, count time up to the pause moment.
-            const wallEnd = focusPauseEpoch || Date.now();
-            const wallMinutes = focusSessionStartEpoch ? Math.floor((wallEnd - focusSessionStartEpoch) / 60000) : 0;
-            const elapsedMinutes = focusSessionStartEpoch ? wallMinutes : tickMinutes;
+            // Single source of truth: same timestamp-based elapsed value the
+            // display uses, so backgrounded time is included. Paused gaps
+            // excluded (counts up to the pause moment if paused at reset).
+            const elapsedMinutes = Math.floor(getFocusElapsedMs() / 60000);
             if (elapsedMinutes >= 1) {
                 (async function () {
                     const rate = (_dur.xp || 25) / (WORK / 60);
@@ -1257,6 +1283,22 @@ function bindToday(container, ctx) {
         container.querySelector('#focus-pause').classList.add('hidden');
         updateFocusDisplay();
     });
+    // Catch up immediately when the tab becomes visible again, instead of
+    // waiting for the next (throttled) interval tick. Recalculates from
+    // Date.now() and fires completion at once if time ran out in background.
+    function onFocusVisibility() {
+        if (document.visibilityState !== 'visible') return;
+        if ((focusPhase === 'work' || focusPhase === 'break') && focusSessionStartEpoch && !focusPauseEpoch) {
+            syncFocusClockToDisplay();
+            updateFocusDisplay();
+            if (focusSecondsLeft <= 1) focusTick();
+        }
+    }
+    try {
+        if (window._shFocusVisHandler) document.removeEventListener('visibilitychange', window._shFocusVisHandler);
+    } catch (e) {}
+    try { window._shFocusVisHandler = onFocusVisibility; } catch (e) {}
+    document.addEventListener('visibilitychange', onFocusVisibility);
     updateFocusDisplay();
 }
 
