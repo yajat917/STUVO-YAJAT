@@ -1,5 +1,5 @@
 const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
-const FALLBACK_MODEL = "openrouter/free";
+const FALLBACK_MODEL = "liquid/lfm-2.5-2.6b:free";
 // SECURITY: never commit a real API key here. This legacy StudyOS app calls
 // OpenRouter directly from the browser, so it ships WITHOUT a key by default.
 // For local testing only, paste your own key below (and do not commit it) —
@@ -46,28 +46,45 @@ async function callOpenRouter(messages, options = {}) {
     "X-OpenRouter-Title": "StudyOS",
   };
 
-  let response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
+  async function doFetch(body) {
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => { try { controller.abort(); } catch (e) {} }, 20000) : null;
+    try {
+      return await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: controller ? controller.signal : undefined,
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
 
-  if (!response.ok) {
+  let response = await doFetch(payload);
+
+  if (!response.ok && response.status !== 401 && response.status !== 403 && response.status !== 402) {
     payload.model = FALLBACK_MODEL;
-    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-    });
+    response = await doFetch(payload);
   }
 
   if (!response.ok) {
-    const err = await response.text();
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`AI service error (${response.status}). Your OpenRouter key was rejected — check Profile → OpenRouter API Key.`);
+    }
+    if (response.status === 429) {
+      throw new Error('AI rate limit reached (429). Wait a minute and try again.');
+    }
+    const err = await response.text().catch(() => '');
     throw new Error(`AI service error (${response.status}). Check your API key and rate limits.`);
   }
 
   const json = await response.json();
-  return json.choices?.[0]?.message?.content || "Unable to generate a response.";
+  const content = json.choices?.[0]?.message?.content;
+  if (content === null || content === undefined || String(content).trim().length === 0) {
+    throw new Error("AI returned an empty response. Please try again.");
+  }
+  return content;
 }
 
 async function generateStudyPlan(examDate, subjects, weakTopics, hours) {

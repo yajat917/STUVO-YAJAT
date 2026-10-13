@@ -1,4 +1,4 @@
-const { callOpenRouter, cleanMathFormatting, STUVO_TUTOR_VOICE } = require('./_lib/openrouter');
+const { callOpenRouter, cleanMathFormatting, parseJSON, STUVO_TUTOR_VOICE } = require('./_lib/openrouter');
 
 const LANGUAGE_NAMES = { en: 'English', hi: 'Hindi', bn: 'Bengali', mr: 'Marathi', te: 'Telugu', ta: 'Tamil' };
 
@@ -28,6 +28,24 @@ function getLanguageInstruction(languageName) {
   return `Respond entirely in ${languageName}. Do not mix in English except for proper nouns, technical terms without a common translation, or mathematical notation which stays universal (x^2, √, etc. remain as-is regardless of language).`;
 }
 
+// Parse model output as JSON robustly (fences / prose-wrapped).
+// Throws {status:502} with a feature-specific message instead of a raw SyntaxError.
+function parseModelJSON(content, featureMessage) {
+  const text = (content === null || content === undefined) ? '' : String(content);
+  if (!text.trim()) throw { status: 502, message: featureMessage || 'The AI returned an empty response. Please try again.' };
+  try {
+    return parseJSON(text);
+  } catch (e) {
+    throw { status: 502, message: featureMessage || 'The AI returned an unexpected format. Please try again.' };
+  }
+}
+
+function requireNonEmptyText(v, featureMessage) {
+  const s = (v === null || v === undefined) ? '' : String(v).trim();
+  if (!s) throw { status: 502, message: featureMessage || 'The AI returned an empty response. Please try again.' };
+  return s;
+}
+
 // ─────────────────────────────────────────────
 // Individual action handlers (logic copied from each old file)
 // ─────────────────────────────────────────────
@@ -51,6 +69,7 @@ async function handleDoubt(body) {
     prompt = `${STUVO_TUTOR_VOICE}\n${languageInstruction}\n\nYou already know the student (grade ${grade || 'unknown'}, subject: ${subject}) — never ask for this again.${gradeLine} A student asks: "${question}". Give a clear step-by-step explanation. Number each step. Structure your answer as numbered steps. End with a clear final answer line starting with "Answer: ".`;
   }
   const answer = cleanMathFormatting(await callOpenRouter(prompt));
+  requireNonEmptyText(answer, 'The tutor returned an empty explanation. Please try again.');
   return { answer };
 }
 
@@ -67,12 +86,14 @@ async function handleSummarizeHomework(body) {
   const prompt = `${languageInstruction}\n\nSummarize this homework assignment for a school student. Base your summary ONLY on the text provided.${jsonInstruction}${simplerInstruction}
 Homework text: ${homeworkText}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
-  const result = JSON.parse(clean);
-  result.summary = cleanMathFormatting(result.summary);
-  result.whatYouNeedToDo = cleanMathFormatting(result.whatYouNeedToDo);
-  result.keyPoints = result.keyPoints.map(cleanMathFormatting);
-  result.importantConcepts = result.importantConcepts.map(cleanMathFormatting);
+  const result = parseModelJSON(content, 'The homework summarizer returned an unexpected format. Please try again.');
+  if (!result.summary || !Array.isArray(result.keyPoints) || !result.whatYouNeedToDo || !Array.isArray(result.importantConcepts)) {
+    throw { status: 502, message: 'The homework summarizer returned an incomplete summary. Please try again.' };
+  }
+  result.summary = cleanMathFormatting(String(result.summary));
+  result.whatYouNeedToDo = cleanMathFormatting(String(result.whatYouNeedToDo));
+  result.keyPoints = result.keyPoints.map(v => cleanMathFormatting(String(v)));
+  result.importantConcepts = result.importantConcepts.map(v => cleanMathFormatting(String(v)));
   return result;
 }
 
@@ -93,27 +114,41 @@ async function handleGenerateQuiz(body) {
   const langJsonNote = languageName !== 'English' ? ` Return ONLY JSON with these exact English key names, but with the VALUES written in ${languageName}: [{"question": "...", "options": ["A","B","C","D"], "correctIndex": 0, "explanation": "..."}]` : ` Return ONLY a JSON array: [{"question": "...", "options": ["A","B","C","D"], "correctIndex": 0, "explanation": "..."}]`;
   const prompt = `${STUVO_TUTOR_VOICE}\n${languageInstruction}\n\nGenerate ${questionCount} multiple choice questions ${source} for a grade ${grade || 'school'} student, at ${difficulty} difficulty.${subjectNote}${gradeNote}${avoidNote} All text must use plain text math notation only (x^2, √, fractions as (a)/(b)) — never LaTeX.${langJsonNote}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
+  const text = (content === null || content === undefined) ? '' : String(content);
+  if (!text.trim()) throw { status: 502, message: 'The quiz generator returned an unexpected format. Please try again.' };
   let questions;
-  try { questions = JSON.parse(clean); }
-  catch (e) {
-    // Free-tier models often wrap the array in prose — extract it.
-    const first = clean.indexOf('[');
-    const last = clean.lastIndexOf(']');
-    if (first !== -1 && last !== -1 && last > first) {
-      try { questions = JSON.parse(clean.slice(first, last + 1)); }
-      catch (e2) { throw { status: 502, message: "The quiz generator returned an unexpected format. Please try again." }; }
-    } else {
+  // Quiz expects a top-level JSON array. Free-tier models often wrap it in
+  // prose — extract the outermost [...] FIRST (generic parseJSON prefers {...}
+  // and would return only the first question object).
+  const ab = text.indexOf('['), ae = text.lastIndexOf(']');
+  if (ab !== -1 && ae > ab) {
+    try { questions = JSON.parse(text.slice(ab, ae + 1)); } catch (e) { questions = undefined; }
+  }
+  if (!Array.isArray(questions)) {
+    try {
+      const parsed = parseModelJSON(text, 'The quiz generator returned an unexpected format. Please try again.');
+      questions = Array.isArray(parsed) ? parsed : parsed.questions;
+    } catch (e) {
       throw { status: 502, message: "The quiz generator returned an unexpected format. Please try again." };
     }
   }
   if (!Array.isArray(questions) || questions.length === 0) {
     throw { status: 502, message: "No questions were generated. Try a different topic." };
   }
+  // Validate + normalize schema the frontend depends on:
+  // {question, options[4], correctIndex 0-3, explanation}
+  questions = questions.filter(q => q && typeof q.question === 'string' && q.question.trim()
+    && Array.isArray(q.options) && q.options.length === 4);
+  if (!questions.length) {
+    throw { status: 502, message: "The quiz generator returned an incomplete format. Please try again." };
+  }
   questions.forEach(q => {
-    q.question = cleanMathFormatting(q.question);
-    q.options = q.options.map(cleanMathFormatting);
-    q.explanation = cleanMathFormatting(q.explanation || '');
+    q.question = cleanMathFormatting(String(q.question));
+    q.options = q.options.map(v => cleanMathFormatting(String(v)));
+    let idx = Number(q.correctIndex);
+    if (!Number.isInteger(idx) || idx < 0 || idx > 3) idx = 0;
+    q.correctIndex = idx;
+    q.explanation = cleanMathFormatting(q.explanation ? String(q.explanation) : '');
   });
   return { questions };
 }
@@ -135,19 +170,8 @@ async function handlePracticeBit(body) {
   const jsonNote = languageName !== 'English' ? ` Return ONLY JSON with these exact English key names, but with the VALUES written in ${languageName}: {"question": "...", "correctAnswer": "...", "hint": "one short hint, not the answer"}` : ` Return ONLY JSON: {"question": "...", "correctAnswer": "...", "hint": "one short hint, not the answer"}`;
   const prompt = `${languageInstruction}\n\nGenerate one short practice question about ${finalSubject} (topic: ${finalTopic}) for a grade ${grade || 'school'} student. Keep it short.${gradeNote}${jsonNote}`;
   const content = await callOpenRouter(prompt);
-  let result;
-  try {
-    result = JSON.parse(content.replace(/```json|```/g, '').trim());
-  } catch (e) {
-    // Free-tier models often wrap JSON in prose — extract the object.
-    const first = content.indexOf('{');
-    const last = content.lastIndexOf('}');
-    if (first === -1 || last === -1 || last <= first) {
-      throw { status: 502, message: 'The question generator returned an unexpected format. Please try again.' };
-    }
-    try { result = JSON.parse(content.slice(first, last + 1)); }
-    catch (e2) { throw { status: 502, message: 'The question generator returned an unexpected format. Please try again.' }; }
-  }
+  const text = (content === null || content === undefined) ? '' : String(content);
+  const result = parseModelJSON(text, 'The question generator returned an unexpected format. Please try again.');
   if (!result.question || !result.correctAnswer) {
     throw { status: 502, message: 'The question generator returned an incomplete question. Please try again.' };
   }
@@ -172,9 +196,11 @@ async function handleCheckAnswer(body) {
     : `No reference answer was stored — judge the student's answer on its own merits against the question.`;
   const prompt = `${languageInstruction}\n\nQuestion: "${question}". ${referenceLine} Student answered: "${studentAnswer}". Is the student correct?${jsonNote}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
-  const result = JSON.parse(clean);
-  result.feedback = cleanMathFormatting(result.feedback);
+  const result = parseModelJSON(content, 'The answer checker returned an unexpected format. Please try again.');
+  if (typeof result.isCorrect === 'undefined' || !result.feedback) {
+    throw { status: 502, message: 'The answer checker returned an incomplete evaluation. Please try again.' };
+  }
+  result.feedback = cleanMathFormatting(String(result.feedback));
   if (result.correctAnswer) result.correctAnswer = cleanMathFormatting(result.correctAnswer);
   return { isCorrect: Boolean(result.isCorrect), feedback: result.feedback, correctAnswer: result.correctAnswer || correctAnswer || '' };
 }
@@ -191,8 +217,10 @@ async function handleGenerateRevision(body) {
 {"keyConcepts": ["..."], "formulas": ["..."], "quickNotes": "...", "practiceQuestions": [{"question": "...", "answer": "..."}], "checklist": ["..."]}`;
   const prompt = `${STUVO_TUTOR_VOICE}\n${languageInstruction}\n\nCreate revision material for a grade ${grade || 'school'} student on "${chapter}" in ${subject}.${gradeNote} Write all formulas in plain text notation (e.g. "Area = π × r^2", not LaTeX). Omit the formulas section (empty array) if the topic has no formulas. Structure, in this exact order: Key Concepts, then Formulas, then Quick Notes, then Practice Questions, then finally a short revision checklist the student can tick off (3-6 concrete items like "Recite the 3 key definitions from memory").${jsonNote}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
-  const result = JSON.parse(clean);
+  const result = parseModelJSON(content, 'The revision generator returned an unexpected format. Please try again.');
+  if (!Array.isArray(result.keyConcepts) || result.keyConcepts.length === 0 || !result.quickNotes) {
+    throw { status: 502, message: 'The revision generator returned an incomplete response. Please try again.' };
+  }
   result.formulas = (result.formulas || []).map(cleanMathFormatting);
   result.quickNotes = cleanMathFormatting(result.quickNotes || '');
   result.practiceQuestions = (result.practiceQuestions || []).map(q => ({
@@ -219,10 +247,12 @@ Practice bit accuracy: ${practiceBitAccuracy}%
 Days since last studied: ${daysSinceStudied}
 Based ONLY on this real data, write a short (3-4 sentence) supportive summary of where they stand and ONE specific, actionable suggestion. Do not invent scores or claims not in this data. Return ONLY JSON: {"summary": "...", "suggestion": "..."}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
-  const result = JSON.parse(clean);
-  result.summary = cleanMathFormatting(result.summary);
-  result.suggestion = cleanMathFormatting(result.suggestion);
+  const result = parseModelJSON(content, 'The weakness analyzer returned an unexpected format. Please try again.');
+  if (!result.summary || !result.suggestion) {
+    throw { status: 502, message: 'The weakness analyzer returned an incomplete response. Please try again.' };
+  }
+  result.summary = cleanMathFormatting(String(result.summary));
+  result.suggestion = cleanMathFormatting(String(result.suggestion));
   return result;
 }
 
@@ -236,7 +266,8 @@ async function handleSubjectHealthNudge(body) {
   if (status === 'strong') return { nudge: '' }; // no nudge needed when things are going well
   const prompt = `${STUVO_TUTOR_VOICE}
 A grade ${grade} student's ${subject} status is "${status}" (needs_attention or steady). Write ONE short, warm, actionable sentence (under 15 words) nudging them toward the Revision or Doubt Assistant tool for this subject. No guilt, no pressure.`;
-  const nudge = cleanMathFormatting(await callOpenRouter(prompt));
+  const nudgeRaw = await callOpenRouter(prompt);
+  const nudge = cleanMathFormatting(requireNonEmptyText(nudgeRaw, 'The nudge generator returned an empty response. Please try again.'));
   return { nudge };
 }
 
@@ -253,7 +284,8 @@ async function handleScheduleNarrative(body) {
   const prompt = `${STUVO_TUTOR_VOICE}
 A grade ${grade} student has this weekly study plan: ${JSON.stringify(weeklyPlan)}
 Write a brief (2-3 sentence) encouraging summary of the week ahead based on this real plan. Do not suggest anything not in the plan.`;
-  const narrative = cleanMathFormatting(await callOpenRouter(prompt));
+  const narrativeRaw = await callOpenRouter(prompt);
+  const narrative = cleanMathFormatting(requireNonEmptyText(narrativeRaw, 'The schedule writer returned an empty response. Please try again.'));
   return { narrative };
 }
 
@@ -274,8 +306,17 @@ Recently studied subjects: ${(recentlyStudiedSubjects || []).join(', ') || 'none
 Subjects with no recent activity: ${neglectedSubjects.join(', ') || 'none'}
 Give a short prioritized study recommendation, maximum 3 items. Keep each "reason" under 8 words, each "action" under 12 words.${gradeLine}${jsonNote}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+  const parsed = parseModelJSON(content, 'The study recommender returned an unexpected format. Please try again.');
+  if (!parsed || !Array.isArray(parsed.priorities) || parsed.priorities.length === 0) {
+    throw { status: 502, message: 'The study recommender returned an incomplete response. Please try again.' };
+  }
+  parsed.priorities = parsed.priorities.slice(0, 3).map(p => ({
+    action: String((p && p.action) || '').slice(0, 200),
+    reason: String((p && p.reason) || '').slice(0, 200),
+    estimatedMinutes: Math.min(180, Math.max(5, Number((p && p.estimatedMinutes)) || 25))
+  })).filter(p => p.action);
+  if (!parsed.priorities.length) throw { status: 502, message: 'The study recommender returned an incomplete response. Please try again.' };
+  return parsed;
 }
 
 async function handleClassPulse(body) {
@@ -289,8 +330,13 @@ async function handleClassPulse(body) {
   const prompt = `${languageInstruction}\n\nA teacher's class has: ${completionPercent}% homework completion, ${notSubmittedCount} students haven't submitted, average quiz performance ${avgQuizScore}%, weak topics: ${(weakTopics||[]).join(', ') || 'none identified'}.
 Give ONE short, actionable recommendation, under 20 words, plain direct language.${jsonNote}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
-  return JSON.parse(clean);
+  const parsed = parseModelJSON(content, 'The class assistant returned an unexpected format. Please try again.');
+  if (!parsed || !parsed.recommendation) {
+    throw { status: 502, message: 'The class assistant returned an incomplete response. Please try again.' };
+  }
+  parsed.recommendation = cleanMathFormatting(String(parsed.recommendation));
+  requireNonEmptyText(parsed.recommendation, 'The class assistant returned an empty response. Please try again.');
+  return parsed;
 }
 
 async function handleWellbeingAssistant(body) {
@@ -308,7 +354,10 @@ async function handleWellbeingAssistant(body) {
   const historyText = conversationHistory.map(m => `${m.role}: ${m.content}`).join('\n');
   const prompt = `${languageInstruction}\n\n${SYSTEM_CONTEXT}${nameLine}\n\nConversation so far:\n${historyText || '(this is the first message)'}\n\nStudent: ${message}\n\nHold a real conversation, not a one-off answer:\n- Respond directly to what the student just shared — reflect it back briefly so they feel heard.\n- Keep it short (2-5 sentences) and end with ONE open follow-up question that invites them to continue, unless they asked for a specific technique (then guide them through it step by step instead).\n- Remember earlier turns: refer back to things they mentioned when relevant.\n- Vary your wording every reply — never repeat the same generic lines.`;
   const replyRaw = await callOpenRouter(prompt);
-  const replyClean = cleanMathFormatting((replyRaw || '').trim() || "I'm here to listen. Would you like to try a short breathing exercise, jot a thought in your journal, or talk more about what's on your mind?");
+  // Fail visibly on empty model output — never substitute a generic message,
+  // otherwise every outage looks like the assistant repeating itself.
+  const replyText = requireNonEmptyText(replyRaw, 'The wellbeing assistant returned an empty response. Please try again.');
+  const replyClean = cleanMathFormatting(replyText);
   const finalReply = replyClean.replace(/AI Counselor/gi, 'Stuvo Wellbeing Assistant');
   // Extended concern keywords for all languages — CRITICAL: this list must be reviewed by native speakers for crisis-detection accuracy
   // Flagged for manual review: Hindi, Bengali, Marathi, Telugu, Tamil equivalents need verification by native speakers before shipping

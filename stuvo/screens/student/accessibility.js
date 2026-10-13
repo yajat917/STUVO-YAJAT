@@ -845,25 +845,24 @@ async function simplifyWord(word, lang) {
   }
   try {
     const effLang = lang || window.currentUserLanguage || 'en';
-    // Use existing AI infrastructure
+    // Use the plain-text Doubt Tutor for definitions: wellbeingAssistant returns
+    // {reply} and cannot satisfy a {meaning,example} schema.
     const data = await safeApiCall('/api/ai', {
-      action: 'wellbeingAssistant',
-      prompt: `Explain the word "${word}" in simple language for a school student in language "${effLang}". Respond in JSON: {"meaning":"short simple meaning in ${effLang}", "example":"short example sentence using the word"}. Keep meaning under 18 words.`,
-      message: word
+      action: 'doubt',
+      question: `Explain the word "${word}" in simple language for a school student in language "${effLang}". Give a short simple meaning (under 18 words) then a short example sentence using the word.`,
+      subject: 'General'
     });
     let parsed = null;
-    if (data && data.reply) {
-      const m = data.reply.match(/\{[\s\S]*\}/);
+    if (data && data.answer) {
+      const text = String(data.answer);
+      const m = text.match(/\{[\s\S]*\}/);
       if (m) { try { parsed = JSON.parse(m[0]); } catch {} }
-      if (!parsed) {
-        // Fallback: treat reply as meaning
-        parsed = { meaning: data.reply.slice(0,120), example: '' };
+      if (!parsed || !parsed.meaning) {
+        // Plain-text answer: first sentence = meaning, rest = example context.
+        parsed = { meaning: text.slice(0, 140), example: '' };
       }
-    } else if (data && data.meaning) {
-      parsed = data;
     } else {
-      // Try direct fallback
-      parsed = { meaning: `Simple meaning of "${word}" in ${effLang}`, example: '' };
+      return null; // fail visibly (no synthetic definition)
     }
     _simplifyCache[key] = parsed;
     return parsed;

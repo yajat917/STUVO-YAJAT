@@ -29,11 +29,12 @@ function getApiKey() {
 getApiKey();
 
 const MODELS = [
-  "openrouter/free",
+  "google/gemma-4-31b-it:free",
   "liquid/lfm-2.5-2.6b:free",
-  "nvidia/nemotron-3-nano-30b-a3b:free",
-  "google/gemma-4-31b-it:free"
+  "nvidia/nemotron-3-nano-30b-a3b:free"
 ];
+
+const REQUEST_TIMEOUT_MS = 20000;
 
 const FORMAT_STANDARD = `
 FORMATTING RULES — follow these exactly in every response:
@@ -62,14 +63,27 @@ You are the Stuvo Tutor, an AI study assistant for a school student.
 - Never invent facts, homework, or data not given to you in the prompt context.
 `;
 
+function isRetryableStatus(status) {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+function isAuthErrorMessage(msg) {
+  const m = String(msg || '');
+  return /401|403|rejected the API key|invalid.*key|unauthorized|forbidden|402|payment|credits/i.test(m);
+}
+
 async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
   const apiKey = getApiKey();
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY environment variable is not set.");
+    const e = new Error("OPENROUTER_API_KEY environment variable is not set.");
+    e.status = 500;
+    throw e;
   }
 
   let messages;
   let selectedModel = typeof model === 'object' && model !== null ? (model.model || MODELS[0]) : model;
+  // Guard against stale/invalid model ids persisted in old code paths.
+  if (!MODELS.includes(selectedModel)) selectedModel = MODELS[0];
   let max_tokens = 1000;
   let temperature = 0.7;
 
@@ -91,98 +105,158 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     messages = [{ role: "user", content: fullPrompt }];
   }
 
+  const canRetry = attempt < MODELS.length - 1;
+  const nextModelFor = () => MODELS[attempt + 1];
+  const withNextModel = () => {
+    const nm = nextModelFor();
+    return typeof model === 'object' && model !== null ? { ...model, model: nm } : nm;
+  };
+
+  let response;
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://stuvo-eosin.vercel.app",
-        "X-Title": "Stuvo"
-      },
-      body: JSON.stringify({
-        model: selectedModel,
-        messages: messages,
-        max_tokens: max_tokens,
-        temperature: temperature
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      console.warn(`Model ${selectedModel} returned HTTP ${response.status}: ${errText.slice(0, 100)}`);
-      if (attempt < MODELS.length - 1) {
-        const nextModel = MODELS[attempt + 1];
-        console.log(`Retrying with fallback model ${nextModel}...`);
-        const nextOpt = typeof model === 'object' && model !== null ? { ...model, model: nextModel } : nextModel;
-        return callOpenRouter(prompt, nextOpt, attempt + 1);
-      }
-      throw new Error(`OpenRouter error (${response.status}): ${errText}`);
-    }
-
-    const rawText = await response.text();
-    let data;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      data = JSON.parse(rawText);
-    } catch (e) {
-      throw new Error("OpenRouter returned non-JSON: " + rawText);
+      response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://stuvo-eosin.vercel.app",
+          "X-Title": "Stuvo"
+        },
+        body: JSON.stringify({
+          model: selectedModel,
+          messages: messages,
+          max_tokens: max_tokens,
+          temperature: temperature
+        }),
+        signal: controller.signal
+      });
+    } finally {
+      clearTimeout(timer);
     }
-
-    if (data.error) {
-      if (attempt < MODELS.length - 1) {
-        const nextModel = MODELS[attempt + 1];
-        const nextOpt = typeof model === 'object' && model !== null ? { ...model, model: nextModel } : nextModel;
-        return callOpenRouter(prompt, nextOpt, attempt + 1);
-      }
-      throw new Error(data.error.message || "OpenRouter error");
-    }
-
-    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-      throw new Error("Unexpected OpenRouter response structure");
-    }
-
-    return data.choices[0].message.content;
   } catch (err) {
-    if (attempt < MODELS.length - 1) {
-      const nextModel = MODELS[attempt + 1];
-      console.warn(`Error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModel}...`);
-      const nextOpt = typeof model === 'object' && model !== null ? { ...model, model: nextModel } : nextModel;
-      return callOpenRouter(prompt, nextOpt, attempt + 1);
+    // Timeout / network error: transient — try next model once.
+    if (err && err.name === 'AbortError') {
+      const e = new Error(`OpenRouter request timed out after ${REQUEST_TIMEOUT_MS / 1000}s (model ${selectedModel}). Please try again.`);
+      e.status = 504;
+      if (canRetry) {
+        console.warn(`Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
+        return callOpenRouter(prompt, withNextModel(), attempt + 1);
+      }
+      throw e;
+    }
+    if (canRetry && !isAuthErrorMessage(err && err.message)) {
+      console.warn(`Network error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1);
     }
     throw err;
   }
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => '');
+    console.warn(`Model ${selectedModel} returned HTTP ${response.status}: ${errText.slice(0, 200)}`);
+    if (response.status === 401 || response.status === 403) {
+      const e = new Error("OpenRouter rejected the API key (HTTP " + response.status + "). Ask the admin to check OPENROUTER_API_KEY.");
+      e.status = 500;
+      throw e; // never retry auth failures across models
+    }
+    if (response.status === 402) {
+      const e = new Error("OpenRouter quota/credits exhausted (HTTP 402). Try again later.");
+      e.status = 502;
+      throw e;
+    }
+    if (isRetryableStatus(response.status) && canRetry) {
+      console.log(`Retrying with fallback model ${nextModelFor()}...`);
+      // Small bounded backoff for rate limits.
+      if (response.status === 429) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+    }
+    const e = new Error(response.status === 429
+      ? "OpenRouter rate limit reached (HTTP 429). Wait a minute and try again."
+      : `OpenRouter error (${response.status}): ${errText.slice(0, 300)}`);
+    e.status = response.status === 429 ? 429 : 502;
+    throw e;
+  }
+
+  const rawText = await response.text();
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch (e) {
+    const err = new Error("OpenRouter returned non-JSON response. Please try again.");
+    err.status = 502;
+    if (canRetry) {
+      console.warn(`Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+    }
+    throw err;
+  }
+
+  if (data.error) {
+    const msg = String((data.error && data.error.message) || "OpenRouter error");
+    if (!isAuthErrorMessage(msg) && canRetry) {
+      console.warn(`Provider error on ${selectedModel}: ${msg}. Retrying with ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+    }
+    const e = new Error(msg.slice(0, 300));
+    e.status = 502;
+    throw e;
+  }
+
+  if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+    const e = new Error("Unexpected OpenRouter response structure (missing choices). Please try again.");
+    e.status = 502;
+    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1);
+    throw e;
+  }
+
+  const content = data.choices[0].message.content;
+  if (content === null || content === undefined || String(content).trim().length === 0) {
+    const e = new Error("The AI model returned an empty response. Please try again.");
+    e.status = 502;
+    if (canRetry) {
+      console.warn(`Empty content from ${selectedModel}, retrying with ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+    }
+    throw e;
+  }
+
+  return content;
 }
 
 function parseJSON(text) {
-  if (!text) throw new Error('Empty response');
+  if (text === null || text === undefined || String(text).trim().length === 0) throw new Error('Empty response');
+  const str = String(text);
   try {
-    return JSON.parse(text);
+    return JSON.parse(str);
   } catch (e) {}
 
-  const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  const match = str.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (match && match[1]) {
     try {
       return JSON.parse(match[1]);
     } catch (e) {}
   }
 
-  const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
+  const firstBrace = str.indexOf('{');
+  const lastBrace = str.lastIndexOf('}');
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
     try {
-      return JSON.parse(text.slice(firstBrace, lastBrace + 1));
+      return JSON.parse(str.slice(firstBrace, lastBrace + 1));
     } catch (e) {}
   }
 
-  const firstBracket = text.indexOf('[');
-  const lastBracket = text.lastIndexOf(']');
+  const firstBracket = str.indexOf('[');
+  const lastBracket = str.lastIndexOf(']');
   if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
     try {
-      return JSON.parse(text.slice(firstBracket, lastBracket + 1));
+      return JSON.parse(str.slice(firstBracket, lastBracket + 1));
     } catch (e) {}
   }
 
-  const clean = text.replace(/```json|```/g, '').trim();
+  const clean = str.replace(/```json|```/g, '').trim();
   return JSON.parse(clean);
 }
 
@@ -201,4 +275,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS };

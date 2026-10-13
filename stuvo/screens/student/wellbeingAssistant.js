@@ -262,7 +262,10 @@ async function renderStudentWellbeingAssistant(container) {
         studentName: userName,
         conversationHistory: conversationHistory.slice(0, -1)
       });
-      const reply = data.reply || "I'm here to listen. Would you like to try a short breathing exercise or talk more about what's on your mind?";
+      if (!data || !data.reply || !String(data.reply).trim()) {
+        throw new Error('The wellbeing assistant returned an empty response. Please try again.');
+      }
+      const reply = String(data.reply);
       const escalationFlag = !!data.escalationFlag;
       typing.remove();
       addBubble('assistant', reply, { escalation: escalationFlag });

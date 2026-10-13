@@ -663,10 +663,9 @@ async function checkAndCreateDeadlineNotifications(uid, classIds) {
 // stored ONLY in this browser (localStorage studyos_openrouter_key),
 // set via Settings → AI Key. Never fetch or store the server key client-side.
 const STUVO_FALLBACK_MODELS = [
-    "openrouter/free",
+    "google/gemma-4-31b-it:free",
     "liquid/lfm-2.5-2.6b:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "google/gemma-4-31b-it:free"
+    "nvidia/nemotron-3-nano-30b-a3b:free"
 ];
 const STUVO_AI_KEY_NAMES = ['studyos_openrouter_key', 'openrouter_api_key'];
 
@@ -781,6 +780,8 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
     const MODELS = STUVO_FALLBACK_MODELS;
     const selectedModel = MODELS[Math.min(attempt, MODELS.length - 1)];
     const messages = buildOpenRouterMessages(prompt);
+    const controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = controller ? setTimeout(() => { try { controller.abort(); } catch (e) {} }, 20000) : null;
     try {
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
@@ -795,16 +796,18 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
                 messages,
                 max_tokens: 1000,
                 temperature: 0.7
-            })
+            }),
+            signal: controller ? controller.signal : undefined
         });
         if (!response.ok) {
-            if (attempt < MODELS.length - 1) {
-                return callDirectOpenRouterFromAPI(prompt, apiKey, attempt + 1);
-            }
-            const errText = await response.text().catch(() => '');
             if (response.status === 401 || response.status === 403) {
                 throw new Error("OpenRouter rejected the API key (HTTP " + response.status + "). Check Settings → AI Key and save a valid sk-or-v1-... key.");
             }
+            if ((response.status === 429 || (response.status >= 500 && response.status <= 599)) && attempt < MODELS.length - 1) {
+                if (response.status === 429) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+                return callDirectOpenRouterFromAPI(prompt, apiKey, attempt + 1);
+            }
+            const errText = await response.text().catch(() => '');
             if (response.status === 429) {
                 throw new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
             }
@@ -815,8 +818,13 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
         try { data = JSON.parse(rawText); } catch (e) { throw new Error("OpenRouter returned non-JSON"); }
         if (data.error) throw new Error(data.error.message || "OpenRouter error");
         if (!data.choices || !data.choices[0] || !data.choices[0].message) throw new Error("Unexpected OpenRouter response");
-        return data.choices[0].message.content;
+        const content = data.choices[0].message.content;
+        if (content === null || content === undefined || String(content).trim().length === 0) {
+            throw new Error("The AI model returned an empty response. Please try again.");
+        }
+        return content;
     } catch (err) {
+        if (err && err.name === 'AbortError') throw new Error("AI request timed out after 20s. Please try again.");
         // Retry across fallback models for transient/network errors only —
         // never retry auth errors (they will fail identically on every model).
         const msg = String((err && err.message) || '');
@@ -826,6 +834,8 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
             return callDirectOpenRouterFromAPI(prompt, apiKey, attempt + 1);
         }
         throw err;
+    } finally {
+        if (timer) clearTimeout(timer);
     }
 }
 
@@ -880,10 +890,27 @@ async function handleClientFallback(endpoint, payload = {}) {
     if (ep === 'ai' && payload && payload.action) {
         ep = payload.action;
     }
-    const cleanJSON = (txt) => {
-        if (!txt) return {};
-        const clean = txt.replace(/```json|```/g, '').trim();
-        try { return JSON.parse(clean); } catch (e) { return {}; }
+    const strictJSON = (txt, what) => {
+        if (txt === null || txt === undefined || String(txt).trim().length === 0) {
+            throw new Error((what || 'AI') + ' returned an empty response. Please try again.');
+        }
+        const clean = String(txt).replace(/```json|```/g, '').trim();
+        try { return JSON.parse(clean); }
+        catch (e) {
+            // Extract [...] before {...}: for quiz arrays the object-first
+            // order would return only the first question object.
+            const s = String(txt);
+            const ab = s.indexOf('['), ae = s.lastIndexOf(']');
+            if (ab !== -1 && ae > ab) { try { return JSON.parse(s.slice(ab, ae + 1)); } catch (e3) {} }
+            const fb = s.indexOf('{'), lb = s.lastIndexOf('}');
+            if (fb !== -1 && lb > fb) { try { return JSON.parse(s.slice(fb, lb + 1)); } catch (e2) {} }
+            throw new Error((what || 'AI') + ' returned an unexpected format. Please try again.');
+        }
+    };
+    const requireText = (v, what) => {
+        const s = (v === null || v === undefined) ? '' : String(v).trim();
+        if (!s) throw new Error((what || 'AI') + ' returned an empty response. Please try again.');
+        return s;
     };
 
     if (ep === 'studyPlan') {
@@ -893,21 +920,18 @@ async function handleClientFallback(endpoint, payload = {}) {
             { role: 'system', content: 'You are an AI study planner. Format daily study plans using day ranges, topics, hours, and priority (HIGH/MEDIUM/LOW).' },
             { role: 'user', content: `Create a study plan for subjects: ${subjects.join(', ')}. Exam date: ${examDate}. Daily study hours: ${hours}. Weak topics: ${weakStr}.\n\nFormat with Day 1-3, Day 4-6 blocks with Subject, Topic, hours, and Priority.` }
         ]);
-        return { plan: plan || "Daily Study Plan:\n\nDay 1-3\n" + (subjects[0] || "General") + ": Key Concepts\n" + hours + " hours\nPriority: HIGH\n---" };
+        return { plan: requireText(plan, 'Study planner') };
     }
 
     if (ep === 'generateRevision') {
         const { subject = 'General', chapter = 'Chapter', grade = '' } = payload;
         const prompt = `Create revision material for a grade ${grade || 'school'} student on "${chapter}" in ${subject}. Return ONLY JSON:\n{\n  "keyConcepts": ["concept 1", "concept 2"],\n  "formulas": ["formula or rule 1"],\n  "quickNotes": "summary paragraph",\n  "practiceQuestions": [{"question": "q1", "answer": "a1"}],\n  "checklist": ["revision step 1", "revision step 2", "revision step 3"]\n}`;
         const raw = await callDirectOpenRouter(prompt);
-        const parsed = cleanJSON(raw);
-        return {
-            keyConcepts: parsed.keyConcepts || [`Key overview of ${chapter}`, `Core definitions in ${subject}`],
-            formulas: parsed.formulas || [`Key rule for ${chapter}`],
-            quickNotes: parsed.quickNotes || `Comprehensive study notes for ${chapter} in ${subject}.`,
-            practiceQuestions: parsed.practiceQuestions || [{ question: `What is the key principle of ${chapter}?`, answer: `Fundamental concept of ${chapter}.` }],
-            checklist: parsed.checklist || [`Review the key concepts of ${chapter}`, `Recite the core definitions from memory`, `Solve 3 practice questions on ${chapter}`]
-        };
+        const parsed = strictJSON(raw, 'Revision generator');
+        if (!Array.isArray(parsed.keyConcepts) || !parsed.keyConcepts.length || !parsed.quickNotes) {
+            throw new Error('Revision generator returned an incomplete response. Please try again.');
+        }
+        return parsed;
     }
 
     if (ep === 'generateQuiz') {
@@ -915,10 +939,11 @@ async function handleClientFallback(endpoint, payload = {}) {
         const src = sourceText ? `based on: "${sourceText}"` : `about "${topic}"`;
         const prompt = `Generate ${questionCount} multiple choice questions ${src} for a school student, difficulty: ${difficulty}. Return ONLY JSON array: [{"question": "...", "options": ["A","B","C","D"], "correctIndex": 0, "explanation": "..."}]`;
         const raw = await callDirectOpenRouter(prompt);
-        const parsed = cleanJSON(raw);
-        const questions = Array.isArray(parsed) ? parsed : (parsed.questions || [
-            { question: `What is a primary concept of ${topic}?`, options: [`Option A`, `Option B`, `Option C`, `Option D`], correctIndex: 0, explanation: `Correct answer explanation for ${topic}.` }
-        ]);
+        const parsed = strictJSON(raw, 'Quiz generator');
+        const questions = Array.isArray(parsed) ? parsed : parsed.questions;
+        if (!Array.isArray(questions) || !questions.length) {
+            throw new Error('No questions were generated. Try a different topic.');
+        }
         return { questions };
     }
 
@@ -928,7 +953,7 @@ async function handleClientFallback(endpoint, payload = {}) {
         if (mode === 'simpler') prompt = `A grade ${grade || 'school'} student found this explanation too complex: "${previousAnswer}". Re-explain "${question}" (${subject}) using simpler words, shorter sentences, and a more basic analogy. Number each step. End with a clear final answer line starting with "Answer: ".`;
         if (mode === 'alternative') prompt = `A grade ${grade || 'school'} student wants a different way to understand "${question}" (${subject}). Original explanation: "${previousAnswer}". Provide a genuinely different method or approach, step-by-step. Number each step. End with a clear final answer line starting with "Answer: ".`;
         const answer = await callDirectOpenRouter(prompt);
-        return { answer: answer || `Step 1: Understand the core question regarding ${subject}.\nStep 2: Apply the fundamental theorem.\nStep 3: Arrive at the solution.` };
+        return { answer: requireText(answer, 'Tutor') };
     }
 
     if (ep === 'practiceBit') {
@@ -936,12 +961,15 @@ async function handleClientFallback(endpoint, payload = {}) {
         const s = payload.subjects?.[0] || subject;
         const prompt = `Generate one short practice question about ${s} (${topic || s}). Return ONLY JSON: {"question": "...", "correctAnswer": "...", "hint": "..."}`;
         const raw = await callDirectOpenRouter(prompt);
-        const parsed = cleanJSON(raw);
+        const parsed = strictJSON(raw, 'Question generator');
+        if (!parsed.question || !parsed.correctAnswer) {
+            throw new Error('No question returned. Please try again.');
+        }
         return {
             subject: s,
-            question: parsed.question || `What is the key principle in ${s}?`,
-            correctAnswer: parsed.correctAnswer || `Core definition of ${s}`,
-            hint: parsed.hint || `Review the chapter notes.`
+            question: String(parsed.question),
+            correctAnswer: String(parsed.correctAnswer),
+            hint: parsed.hint ? String(parsed.hint) : ''
         };
     }
 
@@ -949,11 +977,14 @@ async function handleClientFallback(endpoint, payload = {}) {
         const { question = '', studentAnswer = '', subject = 'General', correctAnswer = '' } = payload;
         const prompt = `Evaluate student's answer for ${subject}.\nQuestion: ${question}\nCorrect answer: ${correctAnswer}\nStudent Answer: ${studentAnswer}\nReturn ONLY JSON: {"isCorrect": true/false, "correctAnswer": "...", "feedback": "encouraging feedback"}`;
         const raw = await callDirectOpenRouter(prompt);
-        const parsed = cleanJSON(raw);
+        const parsed = strictJSON(raw, 'Answer checker');
+        if (parsed.isCorrect === undefined || !parsed.feedback) {
+            throw new Error('Answer checker returned an incomplete evaluation. Please try again.');
+        }
         return {
-            isCorrect: parsed.isCorrect !== undefined ? Boolean(parsed.isCorrect) : true,
-            correctAnswer: parsed.correctAnswer || correctAnswer || '',
-            feedback: parsed.feedback || 'Good effort! Review the main steps.'
+            isCorrect: Boolean(parsed.isCorrect),
+            correctAnswer: parsed.correctAnswer ? String(parsed.correctAnswer) : (correctAnswer || ''),
+            feedback: String(parsed.feedback)
         };
     }
 
@@ -961,31 +992,31 @@ async function handleClientFallback(endpoint, payload = {}) {
         const { homeworkText = '', mode } = payload;
         const prompt = `Summarize this homework assignment:\n"${homeworkText}"\nReturn ONLY JSON: {"summary": "...", "keyPoints": ["..."], "whatYouNeedToDo": "...", "importantConcepts": ["..."]}`;
         const raw = await callDirectOpenRouter(prompt);
-        const parsed = cleanJSON(raw);
-        return {
-            summary: parsed.summary || homeworkText.slice(0, 100),
-            keyPoints: parsed.keyPoints || ['Complete assigned tasks', 'Review notes'],
-            whatYouNeedToDo: parsed.whatYouNeedToDo || 'Read and answer questions.',
-            importantConcepts: parsed.importantConcepts || ['Core topics']
-        };
+        const parsed = strictJSON(raw, 'Homework summarizer');
+        if (!parsed.summary || !Array.isArray(parsed.keyPoints)) {
+            throw new Error('Homework summarizer returned an incomplete response. Please try again.');
+        }
+        return parsed;
     }
 
     if (ep === 'analyzeWeakness') {
         const { marks = {}, studyTime = {}, focusCount = 0, weakSubjects = [] } = payload;
         const analysis = await callDirectOpenRouter(`Analyze performance:\nMarks: ${JSON.stringify(marks)}\nStudy Time: ${JSON.stringify(studyTime)}\nWeak Subjects: ${weakSubjects.join(', ')}\n\nFormat as Strong, Weak, and Recommendations.`);
-        return { analysis };
+        return { analysis: requireText(analysis, 'Analyzer') };
     }
 
     if (ep === 'classPulse') {
         const prompt = `Class summary: ${JSON.stringify(payload)}. Give ONE short recommendation under 20 words. Return JSON: {"recommendation": "..."}`;
         const raw = await callDirectOpenRouter(prompt);
-        const parsed = cleanJSON(raw);
-        return { recommendation: parsed.recommendation || 'Focus on reviewing recent quiz topics with the class.' };
+        const parsed = strictJSON(raw, 'Class assistant');
+        if (!parsed.recommendation) throw new Error('Class assistant returned an incomplete response. Please try again.');
+        return parsed;
     }
 
     if (ep === 'wellbeingAssistant') {
         const { prompt = '', message = '', conversationHistory = [] } = payload;
         const effectivePrompt = prompt || message || '';
+        if (!String(effectivePrompt).trim()) throw new Error('Message required.');
         const reply = await callDirectOpenRouter([
             { role: 'system', content: 'You are the Stuvo Wellbeing Assistant: a warm, supportive wellbeing companion for students. Empathetic, non-judgmental, encouraging. Hold a real conversation: respond directly to what the student just shared, keep it to 2-5 sentences, end with ONE open follow-up question (unless they asked for a specific calming technique — then guide them through it step by step). Refer back to earlier turns when relevant and never repeat the same generic lines.' },
             ...conversationHistory.slice(-8),
@@ -993,16 +1024,13 @@ async function handleClientFallback(endpoint, payload = {}) {
         ]);
         const concernKeywords = ['hurt myself', 'suicide', 'kill myself', 'want to die', 'self harm', 'self-harm', 'end my life', 'suicidal', 'take my life'];
         const escalationFlag = concernKeywords.some(kw => String(effectivePrompt).toLowerCase().includes(kw));
-        return { reply: reply || "I'm here for you. Take a deep breath and take things one step at a time.", escalationFlag };
+        return { reply: requireText(reply, 'Wellbeing assistant'), escalationFlag };
     }
 
     if (ep === 'nextBestAction') {
-        return {
-            priorities: [
-                { action: 'Review urgent assignments', reason: 'Keep up with deadlines', estimatedMinutes: 20 },
-                { action: 'Practice a quick quiz', reason: 'Strengthen weak topics', estimatedMinutes: 15 }
-            ]
-        };
+        // No synthetic priorities: callers already render a deterministic
+        // real-data fallback (studyHub/dashboard). Failing visibly lets them do so.
+        throw new Error('Study recommender unavailable offline. Please try again when online.');
     }
 
     throw new Error(`Unknown endpoint ${endpoint}`);
