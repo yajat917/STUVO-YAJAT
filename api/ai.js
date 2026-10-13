@@ -96,7 +96,17 @@ async function handleGenerateQuiz(body) {
   const clean = content.replace(/```json|```/g, '').trim();
   let questions;
   try { questions = JSON.parse(clean); }
-  catch (e) { throw { status: 502, message: "The quiz generator returned an unexpected format. Please try again." }; }
+  catch (e) {
+    // Free-tier models often wrap the array in prose — extract it.
+    const first = clean.indexOf('[');
+    const last = clean.lastIndexOf(']');
+    if (first !== -1 && last !== -1 && last > first) {
+      try { questions = JSON.parse(clean.slice(first, last + 1)); }
+      catch (e2) { throw { status: 502, message: "The quiz generator returned an unexpected format. Please try again." }; }
+    } else {
+      throw { status: 502, message: "The quiz generator returned an unexpected format. Please try again." };
+    }
+  }
   if (!Array.isArray(questions) || questions.length === 0) {
     throw { status: 502, message: "No questions were generated. Try a different topic." };
   }
@@ -122,14 +132,28 @@ async function handlePracticeBit(body) {
   if (!finalSubject) finalSubject = 'General';
   const finalTopic = topic || finalSubject;
   const gradeNote = grade ? ` The student is in grade ${grade}: keep the difficulty and vocabulary appropriate for that level.` : '';
-  const jsonNote = languageName !== 'English' ? ` Return ONLY JSON with these exact English key names, but with the VALUES written in ${languageName}: {"question": "...", "correctAnswer": "..."}` : ` Return ONLY JSON: {"question": "...", "correctAnswer": "..."}`;
+  const jsonNote = languageName !== 'English' ? ` Return ONLY JSON with these exact English key names, but with the VALUES written in ${languageName}: {"question": "...", "correctAnswer": "...", "hint": "one short hint, not the answer"}` : ` Return ONLY JSON: {"question": "...", "correctAnswer": "...", "hint": "one short hint, not the answer"}`;
   const prompt = `${languageInstruction}\n\nGenerate one short practice question about ${finalSubject} (topic: ${finalTopic}) for a grade ${grade || 'school'} student. Keep it short.${gradeNote}${jsonNote}`;
   const content = await callOpenRouter(prompt);
-  const clean = content.replace(/```json|```/g, '').trim();
-  const result = JSON.parse(clean);
-  result.question = cleanMathFormatting(result.question);
-  result.correctAnswer = cleanMathFormatting(result.correctAnswer);
-  if (result.hint) result.hint = cleanMathFormatting(result.hint);
+  let result;
+  try {
+    result = JSON.parse(content.replace(/```json|```/g, '').trim());
+  } catch (e) {
+    // Free-tier models often wrap JSON in prose — extract the object.
+    const first = content.indexOf('{');
+    const last = content.lastIndexOf('}');
+    if (first === -1 || last === -1 || last <= first) {
+      throw { status: 502, message: 'The question generator returned an unexpected format. Please try again.' };
+    }
+    try { result = JSON.parse(content.slice(first, last + 1)); }
+    catch (e2) { throw { status: 502, message: 'The question generator returned an unexpected format. Please try again.' }; }
+  }
+  if (!result.question || !result.correctAnswer) {
+    throw { status: 502, message: 'The question generator returned an incomplete question. Please try again.' };
+  }
+  result.question = cleanMathFormatting(String(result.question));
+  result.correctAnswer = cleanMathFormatting(String(result.correctAnswer));
+  if (result.hint) result.hint = cleanMathFormatting(String(result.hint));
   return { subject: finalSubject, question: result.question, correctAnswer: result.correctAnswer, hint: result.hint || '' };
 }
 
@@ -141,7 +165,12 @@ async function handleCheckAnswer(body) {
   if (!question || !studentAnswer) throw { status: 400, message: 'question and studentAnswer required' };
   const languageInstruction = getLanguageInstruction(languageName);
   const jsonNote = languageName !== 'English' ? ` Return ONLY JSON with these exact English key names, but with the VALUES written in ${languageName}: {"isCorrect": true/false, "feedback": "one sentence explanation"}` : ` Return ONLY JSON: {"isCorrect": true/false, "feedback": "one sentence explanation"}`;
-  const prompt = `${languageInstruction}\n\nQuestion: "${question}". Correct answer: "${correctAnswer}". Student answered: "${studentAnswer}". Is the student correct?${jsonNote}`;
+  // Older Practice Bit docs were saved without a reference answer — in that
+  // case ask the model to judge on the merits instead of an empty string.
+  const referenceLine = correctAnswer && correctAnswer.trim()
+    ? `Correct answer: "${correctAnswer}".`
+    : `No reference answer was stored — judge the student's answer on its own merits against the question.`;
+  const prompt = `${languageInstruction}\n\nQuestion: "${question}". ${referenceLine} Student answered: "${studentAnswer}". Is the student correct?${jsonNote}`;
   const content = await callOpenRouter(prompt);
   const clean = content.replace(/```json|```/g, '').trim();
   const result = JSON.parse(clean);
@@ -272,10 +301,12 @@ async function handleWellbeingAssistant(body) {
   }));
   const languageName = body.languageName || 'English';
   const languageInstruction = getLanguageInstruction(languageName);
+  const studentName = cappedStr(body.studentName, 60, 'studentName');
   if (!message || !String(message).trim()) throw { status: 400, message: 'prompt required' };
   const SYSTEM_CONTEXT = `You are the Stuvo Wellbeing Assistant, a supportive listening tool for school students. Listen, help organize thoughts, suggest healthy coping strategies, help with study stress, help prepare what to say to a teacher/counselor, gently point toward school support. NEVER diagnose, NEVER pretend to be a licensed counselor, NEVER encourage secrecy from trusted adults, NEVER give dangerous advice, NEVER promise confidentiality you cannot guarantee, NEVER try to be the sole support for a serious situation. If the student describes danger, harm, or self-harm thoughts, respond with care and clearly encourage them to talk to a trusted adult or support service right away. Keep responses plain, warm, conversational — no markdown, no bullet lists unless walking through a technique step-by-step.`;
+  const nameLine = studentName ? ` The student's first name is ${studentName} — you may use it occasionally (not in every message).` : '';
   const historyText = conversationHistory.map(m => `${m.role}: ${m.content}`).join('\n');
-  const prompt = `${languageInstruction}\n\n${SYSTEM_CONTEXT}\n\nConversation so far:\n${historyText}\n\nStudent: ${message}\n\nRespond warmly and briefly.`;
+  const prompt = `${languageInstruction}\n\n${SYSTEM_CONTEXT}${nameLine}\n\nConversation so far:\n${historyText || '(this is the first message)'}\n\nStudent: ${message}\n\nHold a real conversation, not a one-off answer:\n- Respond directly to what the student just shared — reflect it back briefly so they feel heard.\n- Keep it short (2-5 sentences) and end with ONE open follow-up question that invites them to continue, unless they asked for a specific technique (then guide them through it step by step instead).\n- Remember earlier turns: refer back to things they mentioned when relevant.\n- Vary your wording every reply — never repeat the same generic lines.`;
   const replyRaw = await callOpenRouter(prompt);
   const replyClean = cleanMathFormatting((replyRaw || '').trim() || "I'm here to listen. Would you like to try a short breathing exercise, jot a thought in your journal, or talk more about what's on your mind?");
   const finalReply = replyClean.replace(/AI Counselor/gi, 'Stuvo Wellbeing Assistant');

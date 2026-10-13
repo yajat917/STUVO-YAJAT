@@ -157,6 +157,23 @@ async function renderStudentPracticeBits(container) {
         `;
     }
 
+    // Firestore rejects `undefined` field values outright, so every write goes
+    // through this sanitizer: strings are coerced, missing subject falls back
+    // to the rotated subject, and optional answer fields are only included
+    // once the student has actually answered.
+    function toFirestoreBit(bit, fallbackSubject) {
+        const clean = {
+            subject: String((bit && bit.subject) || fallbackSubject || 'General'),
+            question: String((bit && bit.question) || ''),
+            correctAnswer: String((bit && bit.correctAnswer) || ''),
+            hint: String((bit && bit.hint) || ''),
+        };
+        if (bit && bit.studentAnswer !== undefined) clean.studentAnswer = String(bit.studentAnswer);
+        if (bit && bit.isCorrect !== undefined) clean.isCorrect = Boolean(bit.isCorrect);
+        if (bit && bit.aiFeedback !== undefined) clean.aiFeedback = String(bit.aiFeedback || '');
+        return clean;
+    }
+
     function setupListeners() {
         const genBtn = container.querySelector('#btn-generate-bit');
         if (genBtn) {
@@ -169,8 +186,10 @@ async function renderStudentPracticeBits(container) {
                     var rotated = subsForGen[dayOfYear % subsForGen.length] || subsForGen[0];
                     // Pass full list; backend may pick first but we provide rotated as primary
                     const data = await safeApiCall('/api/ai', { action: 'practiceBit', subjects: subsForGen, subject: rotated, grade: getPracticeGrade(), languageName: getPracticeLangName() });
-                    todayBit = { subject: data.subject, question: data.question, hint: data.hint || '' };
-                    await setDoc(doc(db, 'users', uid, 'practiceBits', today), todayBit);
+                    if (!data || !data.question) throw new Error('No question returned. Please try again.');
+                    // Keep correctAnswer alongside (never rendered until answered) so checking has a reference.
+                    todayBit = { subject: data.subject || rotated, question: data.question, correctAnswer: data.correctAnswer || '', hint: data.hint || '' };
+                    await setDoc(doc(db, 'users', uid, 'practiceBits', today), toFirestoreBit(todayBit, rotated));
                     render();
                 } catch (err) {
                     showToast(err.message, 'error');
@@ -187,10 +206,10 @@ async function renderStudentPracticeBits(container) {
                 submitBtn.disabled = true; submitBtn.textContent = _i18n_t('practiceBits.checking','Checking…');
                 try {
                     const data = await safeApiCall('/api/ai', {
-                        action: 'checkAnswer', question: todayBit.question, studentAnswer: answer, subject: todayBit.subject, grade: getPracticeGrade(), languageName: getPracticeLangName()
+                        action: 'checkAnswer', question: todayBit.question, studentAnswer: answer, subject: todayBit.subject, correctAnswer: todayBit.correctAnswer || '', grade: getPracticeGrade(), languageName: getPracticeLangName()
                     });
-                    todayBit = { ...todayBit, studentAnswer: answer, isCorrect: data.isCorrect, correctAnswer: data.correctAnswer, aiFeedback: data.feedback };
-                    await setDoc(doc(db, 'users', uid, 'practiceBits', today), todayBit);
+                    todayBit = { ...todayBit, studentAnswer: answer, isCorrect: Boolean(data && data.isCorrect), correctAnswer: (data && data.correctAnswer) || todayBit.correctAnswer || '', aiFeedback: (data && data.feedback) || 'Good effort! Review the main steps.' };
+                    await setDoc(doc(db, 'users', uid, 'practiceBits', today), toFirestoreBit(todayBit, todayBit.subject));
                     render();
                 } catch (err) {
                     showToast(err.message, 'error');

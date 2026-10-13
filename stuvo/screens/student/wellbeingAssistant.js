@@ -90,6 +90,15 @@ async function renderStudentWellbeingAssistant(container) {
 
   function addBubble(role, content, opts = {}) {
     const wrap = document.createElement('div');
+    if (opts.system) {
+      // System notice (connection/key problems) — deliberately NOT styled like
+      // an assistant reply, so a failure is never mistaken for the assistant talking.
+      wrap.style.cssText = 'align-self:center; background:rgba(245,158,11,0.10); border:1px solid rgba(245,158,11,0.35); border-radius:12px; padding:10px 14px; max-width:90%; font-size:12px; line-height:1.6; color:var(--text-dim); text-align:center;';
+      wrap.textContent = content;
+      thread.appendChild(wrap);
+      thread.scrollTop = thread.scrollHeight;
+      return;
+    }
     wrap.style.cssText = role === 'user'
       ? 'align-self:flex-end; background:rgba(124,92,252,0.18); border:1px solid rgba(124,92,252,0.3); border-radius:14px 14px 4px 14px; padding:12px 14px; max-width:78%; font-size:14px; line-height:1.6;'
       : 'align-self:flex-start; background:rgba(255,255,255,0.06); border:1px solid var(--glass-border); border-radius:14px 14px 14px 4px; padding:14px; max-width:84%; font-size:14px; line-height:1.7;';
@@ -146,11 +155,26 @@ async function renderStudentWellbeingAssistant(container) {
     escalationBanner.style.display = 'none';
   });
 
-  // Persist helper
-  async function saveChatToFirestore(userPrompt, assistantReply, escalationFlag) {
+  // Persist helper — conversationHistory already contains the just-completed
+  // [user, assistant] exchange (pushed before this call), so snapshot it
+  // directly instead of appending the pair a second time.
+  async function saveChatToFirestore(escalationFlag) {
+    let snapshot = [];
+    try { snapshot = conversationHistory.slice(-20); } catch (e) { snapshot = []; }
+    // Coerce every message: Firestore rejects `undefined` field values, and a
+    // single bad entry would fail the whole write (same crash class as the
+    // practiceBits subject-undefined error).
+    snapshot = (Array.isArray(snapshot) ? snapshot : [])
+      .filter(m => m && typeof m.content !== 'undefined')
+      .map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: String(m.content || ''),
+      }))
+      .filter(m => m.content.length > 0);
+    if (!snapshot.length) return;
     try {
       const data = {
-        messages: [...conversationHistory, { role: 'user', content: userPrompt }, { role: 'assistant', content: assistantReply }],
+        messages: snapshot,
         escalationFlag: !!escalationFlag,
         updatedAt: serverTimestamp(),
       };
@@ -204,7 +228,7 @@ async function renderStudentWellbeingAssistant(container) {
               const data = snap.data();
               chatId = id;
               try { sessionStorage.setItem('stuvo_wb_chatId', chatId); } catch {}
-              conversationHistory = (data.messages || []).slice(0, -1); // will add last exchange via addBubble loop
+              conversationHistory = (data.messages || []).slice(-20);
               // Rebuild thread
               const welcome = thread.firstElementChild;
               thread.innerHTML = '';
@@ -235,6 +259,7 @@ async function renderStudentWellbeingAssistant(container) {
     try {
       const data = await safeApiCall('/api/ai', {
         action: 'wellbeingAssistant', prompt, message: prompt,
+        studentName: userName,
         conversationHistory: conversationHistory.slice(0, -1)
       });
       const reply = data.reply || "I'm here to listen. Would you like to try a short breathing exercise or talk more about what's on your mind?";
@@ -248,11 +273,25 @@ async function renderStudentWellbeingAssistant(container) {
         showToast(_i18n_t('wellbeing.supportFlaggedToast','This chat was flagged so a school counselor can offer extra support'), 'info');
       }
       // Save
-      await saveChatToFirestore(prompt, reply, escalationFlag);
+      await saveChatToFirestore(escalationFlag);
     } catch (err) {
       console.error('[wellbeingAssistant]', err);
       typing.remove();
-      addBubble('assistant', "I'm having trouble connecting right now. If you need support, please reach out to a trusted adult or counselor. You can also try a 2-minute breathing break on the Wellbeing home.");
+      // Keep history clean: drop the just-sent user message so a retry sends a
+      // coherent thread (no dangling user turn with no assistant reply).
+      try {
+        if (conversationHistory.length && conversationHistory[conversationHistory.length - 1].role === 'user'
+            && conversationHistory[conversationHistory.length - 1].content === prompt) {
+          conversationHistory.pop();
+        }
+      } catch (e) {}
+      const reason = (err && err.message) ? String(err.message) : 'connection failed';
+      const needsKey = /no API key|AI Key|OPENROUTER_API_KEY|server has no API key/i.test(reason);
+      addBubble('assistant', `⚠️ Couldn't reach the assistant (${reason.slice(0, 160)}). `
+        + (needsKey
+          ? 'Tap the 🤖 button in the top bar to add your free OpenRouter key, or ask your admin to set the server key — then send your message again.'
+          : 'Please check your connection and send your message again. Your chat history is safe.')
+        + ' If you need support right now, please reach out to a trusted adult or counselor.', { system: true });
       showToast(err.message || 'Failed to get response', 'error');
     } finally {
       sendBtn.disabled = false; sendBtn.textContent = 'Send ↑';

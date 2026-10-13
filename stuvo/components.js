@@ -987,8 +987,8 @@ async function handleClientFallback(endpoint, payload = {}) {
         const { prompt = '', message = '', conversationHistory = [] } = payload;
         const effectivePrompt = prompt || message || '';
         const reply = await callDirectOpenRouter([
-            { role: 'system', content: 'You are the Stuvo Wellbeing Assistant: a warm, supportive wellbeing companion for students. Empathetic, non-judgmental, encouraging.' },
-            ...conversationHistory.slice(-6),
+            { role: 'system', content: 'You are the Stuvo Wellbeing Assistant: a warm, supportive wellbeing companion for students. Empathetic, non-judgmental, encouraging. Hold a real conversation: respond directly to what the student just shared, keep it to 2-5 sentences, end with ONE open follow-up question (unless they asked for a specific calming technique — then guide them through it step by step). Refer back to earlier turns when relevant and never repeat the same generic lines.' },
+            ...conversationHistory.slice(-8),
             { role: 'user', content: effectivePrompt }
         ]);
         const concernKeywords = ['hurt myself', 'suicide', 'kill myself', 'want to die', 'self harm', 'self-harm', 'end my life', 'suicidal', 'take my life'];
