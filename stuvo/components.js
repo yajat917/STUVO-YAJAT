@@ -703,9 +703,12 @@ async function checkAndCreateDeadlineNotifications(uid, classIds) {
 // set via Settings → AI Key. Never fetch or store the server key client-side.
 const STUVO_FALLBACK_MODELS = [
     "google/gemma-4-31b-it:free",
-    "liquid/lfm-2.5-2.6b:free",
     "google/gemma-4-26b-a4b-it:free"
 ];
+// NOTE: liquid/lfm-2.5-2.6b:free was removed (production UPSTREAM_NULL_CONTENT
+// incidents — HTTP 200 with content:null from that single-provider reasoning
+// model). See api/_lib/openrouter.js model policy. Max one fallback attempt
+// per request (attempt < 1 below).
 const STUVO_AI_KEY_NAMES = ['studyos_openrouter_key', 'openrouter_api_key'];
 
 function getUserApiKey() {

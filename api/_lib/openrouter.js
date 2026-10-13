@@ -28,9 +28,22 @@ function getApiKey() {
 // Auto-initialize key into environment
 getApiKey();
 
+// Model policy (verified against the live OpenRouter catalog: every ID
+// below is currently LISTED with text->text chat support for temperature /
+// max_tokens / system messages as sent by callOpenRouter).
+// Primary: google/gemma-4-31b-it:free. Single fallback:
+// google/gemma-4-26b-a4b-it:free (same instruct family, standard string
+// `content` responses).
+// NOTE: liquid/lfm-2.5-2.6b:free was REMOVED as fallback after production
+// UPSTREAM_NULL_CONTENT incidents (HTTP 200 with `content: null`). It is a
+// compact reasoning model served by a single provider, and OpenRouter's own
+// availability stats count empty responses against it. Our request shape is
+// within its supported parameters, so this is provider-side unreliability,
+// not a request-shape bug — the parser already handles the documented
+// string/array content schema correctly. Do not re-add it without live
+// verification that it returns non-empty `content` consistently.
 const MODELS = [
   "google/gemma-4-31b-it:free",
-  "liquid/lfm-2.5-2.6b:free",
   "google/gemma-4-26b-a4b-it:free"
 ];
 
@@ -204,13 +217,13 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
       e.status = 504;
       if (canRetry) {
         console.warn(`[${corrId}] Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
-        return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+        return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
       }
       throw e;
     }
     if (canRetry && !isAuthErrorMessage(err && err.message)) {
       console.warn(`[${corrId}] Network error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
     throw err;
   }
@@ -256,7 +269,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
         return callOpenRouter(prompt, withNextModel(), attempt + 1, tried);
       }
       console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
     const e = new Error(response.status === 429
       ? "OpenRouter rate limit reached (HTTP 429). Wait a minute and try again."
@@ -284,7 +297,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     err.status = 502;
     if (canRetry) {
       console.warn(`[${corrId}] Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
     throw err;
   }
@@ -293,7 +306,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     const msg = String((data.error && data.error.message) || "OpenRouter error");
     if (!isAuthErrorMessage(msg) && canRetry) {
       console.warn(`[${corrId}] Provider error on ${selectedModel}: ${upstreamPreview(msg)}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
     const e = new Error(msg.slice(0, 300));
     e.status = 502;
@@ -304,9 +317,10 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     const e = new Error("OpenRouter returned an incomplete response structure (missing choices). Please try again.");
     e.status = 502;
     e.code = 'UPSTREAM_MALFORMED';
+    attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Missing choices/message from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
     throw e;
   }
@@ -320,7 +334,8 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     const e = new Error("OpenRouter returned an incomplete response structure (missing choices). Please try again.");
     e.status = 502;
     e.code = 'UPSTREAM_MALFORMED';
-    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+    attachUpstreamContext(e, triedModels, selectedModel, corrId);
+    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     throw e;
   }
   console.log(`[${corrId}] ${selectedModel} HTTP 200 ${metaLog(meta)}`);
@@ -332,8 +347,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     const e = new Error("The model declined to respond to that request. Please try rephrasing your prompt.");
     e.status = 502;
     e.code = 'UPSTREAM_REFUSAL';
-    e.model = selectedModel;
-    e.corrId = corrId;
+    attachUpstreamContext(e, triedModels, selectedModel, corrId);
     throw e;
   }
 
@@ -345,8 +359,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     const e = new Error("The AI model returned no content. Please try again.");
     e.status = 502;
     e.code = 'UPSTREAM_NULL_CONTENT';
-    e.model = selectedModel;
-    e.corrId = corrId;
+    attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Null content from ${selectedModel}, retrying once with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
@@ -365,8 +378,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     );
     e.status = 502;
     e.code = typeof content !== 'string' ? 'UPSTREAM_MALFORMED' : 'UPSTREAM_EMPTY';
-    e.model = selectedModel;
-    e.corrId = corrId;
+    attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] ${metaLog(meta)} from ${selectedModel}, retrying once with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
@@ -390,6 +402,19 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
 // text, malformed body) gets a distinct, accurately-coded error instead of
 // one generic 502. Captures metadata only — never prompts, keys, or bodies.
 const REFUSAL_FINISH_REASONS = ['content_filter'];
+// Attaches safe failure context (last model, correlation id, every model
+// attempted this request) to an error WITHOUT touching prompts, keys, or
+// bodies. api/ai.js forwards these fields into the JSON error so future
+// incidents (e.g. a null-content fallback) self-describe which models were
+// tried, even when server logs are unavailable.
+function attachUpstreamContext(e, triedModels, selectedModel, corrId) {
+  e.model = selectedModel;
+  e.corrId = corrId;
+  const tried = [...(Array.isArray(triedModels) ? triedModels : [])];
+  if (!tried.includes(selectedModel)) tried.push(selectedModel);
+  if (tried.length) e.triedModels = tried.slice(0, 5);
+  return e;
+}
 function describeUpstreamResult(data) {
   const meta = {
     hasChoices: !!(data && Array.isArray(data.choices)),
@@ -471,4 +496,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, attachUpstreamContext, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };

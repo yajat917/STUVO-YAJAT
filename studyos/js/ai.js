@@ -1,5 +1,7 @@
 const PRIMARY_MODEL = "google/gemma-4-31b-it:free";
-const FALLBACK_MODEL = "liquid/lfm-2.5-2.6b:free";
+// liquid/lfm-2.5-2.6b:free removed after production null-content incidents;
+// gemma-4-26b-a4b-it:free (same instruct family) is the verified fallback.
+const FALLBACK_MODEL = "google/gemma-4-26b-a4b-it:free";
 // SECURITY: never commit a real API key here. This legacy StudyOS app calls
 // OpenRouter directly from the browser, so it ships WITHOUT a key by default.
 // For local testing only, paste your own key below (and do not commit it) —
