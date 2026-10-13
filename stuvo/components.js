@@ -658,40 +658,129 @@ async function checkAndCreateDeadlineNotifications(uid, classIds) {
 }
 
 // ─── AI Client & API Gateway ──────────────────────────────────
-// SECURITY: no API keys in client code. All AI traffic must go through the
-// server-side /api/* endpoints (the OpenRouter key lives server-side only).
-// The old direct-browser fallback with an embedded key was removed — if the
-// backend is unreachable we now fail with a clear error instead of leaking
-// quota. The nextBestAction branch below still works offline (static plan).
+// Primary path: server-side /api/* endpoints (OPENROUTER_API_KEY lives
+// server-side via Vercel env vars). Fallback path: per-user OpenRouter key
+// stored ONLY in this browser (localStorage studyos_openrouter_key),
+// set via Settings → AI Key. Never fetch or store the server key client-side.
 const STUVO_FALLBACK_MODELS = [
     "openrouter/free",
     "liquid/lfm-2.5-2.6b:free",
     "nvidia/nemotron-3-nano-30b-a3b:free",
     "google/gemma-4-31b-it:free"
 ];
+const STUVO_AI_KEY_NAMES = ['studyos_openrouter_key', 'openrouter_api_key'];
+
+function getUserApiKey() {
+    try {
+        if (typeof localStorage === 'undefined') return '';
+        for (const name of STUVO_AI_KEY_NAMES) {
+            const v = (localStorage.getItem(name) || '').trim();
+            if (v) return v;
+        }
+    } catch (e) {}
+    return '';
+}
+
+function isValidOpenRouterKey(key) {
+    const k = String(key || '').trim();
+    // OpenRouter keys look like sk-or-v1-... (64+ hex chars). Accept leniently
+    // so free-tier / rotated formats don't get rejected at the UI layer.
+    return k.length >= 10 && (k.startsWith('sk-or-') || k.length >= 20);
+}
+
+function setUserApiKey(key) {
+    const k = String(key || '').trim();
+    if (!k) return false;
+    if (!isValidOpenRouterKey(k)) return false;
+    try {
+        localStorage.setItem('studyos_openrouter_key', k);
+        try { localStorage.removeItem('openrouter_api_key'); } catch (e) {}
+    } catch (e) { return false; }
+    _serverHasKeyCache = null;
+    return true;
+}
+
+function clearUserApiKey() {
+    try {
+        localStorage.removeItem('studyos_openrouter_key');
+        localStorage.removeItem('openrouter_api_key');
+    } catch (e) {}
+    _serverHasKeyCache = null;
+}
+
+function hasUserApiKey() {
+    return Boolean(getUserApiKey());
+}
+
+let _serverHasKeyCache = null; // null = unknown, true/false = cached
+let _serverHasKeyAt = 0;
+const _SERVER_KEY_TTL = 5 * 60 * 1000;
+
+async function checkServerHasKey() {
+    const now = Date.now();
+    if (_serverHasKeyCache !== null && (now - _serverHasKeyAt) < _SERVER_KEY_TTL) {
+        return _serverHasKeyCache;
+    }
+    // Secure check: endpoint returns {hasKey:boolean} only, never the key.
+    const attempts = [
+        () => fetch('/api/check-key', { method: 'GET' }),
+        () => fetch('/api/check-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+    ];
+    for (const fn of attempts) {
+        try {
+            const res = await fn();
+            if (res.ok) {
+                const data = await res.json().catch(() => ({}));
+                _serverHasKeyCache = Boolean(data.hasKey);
+                _serverHasKeyAt = now;
+                return _serverHasKeyCache;
+            }
+        } catch (e) {}
+    }
+    return null; // unreachable — don't cache
+}
+
+function buildOpenRouterMessages(prompt) {
+    if (Array.isArray(prompt)) {
+        return prompt
+            .map(m => {
+                if (typeof m === 'string') return { role: 'user', content: m };
+                if (m && typeof m === 'object') {
+                    return {
+                        role: m.role === 'system' || m.role === 'assistant' ? m.role : 'user',
+                        content: String(m.content || '')
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean)
+            .slice(-12);
+    }
+    return [{ role: 'user', content: String(prompt || '') }];
+}
+
+function aiSetupHint() {
+    return 'Open Settings → AI Key to add your own OpenRouter key (stored only in this browser), or ask your admin to set OPENROUTER_API_KEY on the server and redeploy.';
+}
 
 async function callDirectOpenRouter(prompt, attempt = 0) {
-    const apiKey = typeof localStorage !== 'undefined' ? (localStorage.getItem('studyos_openrouter_key') || localStorage.getItem('openrouter_api_key') || '') : '';
+    const apiKey = getUserApiKey();
     if (!apiKey) {
-        // Try to get key from server-side env via a dedicated endpoint
-        try {
-            const res = await fetch('/api/check-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-            if (res.ok) {
-                const data = await res.json();
-                if (data.key) {
-                    if (typeof localStorage !== 'undefined') localStorage.setItem('studyos_openrouter_key', data.key);
-                    return callDirectOpenRouterFromAPI(prompt, data.key, attempt);
-                }
-            }
-        } catch(e) {}
-        throw new Error('AI service unavailable: no API key configured. Add your OpenRouter key in localStorage (studyos_openrouter_key) to activate full AI features.');
+        const serverHasKey = await checkServerHasKey();
+        if (serverHasKey === true) {
+            // Server is configured but this request fell back (bad route / transient).
+            // Tell the user to retry — their key is not the problem.
+            throw new Error('AI server is configured but unreachable for this request (route/network issue). Please retry. If it persists, ' + aiSetupHint());
+        }
+        throw new Error('AI service unavailable: no API key found. ' + aiSetupHint());
     }
     return callDirectOpenRouterFromAPI(prompt, apiKey, attempt);
 }
 
 async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
-    const MODELS = ["openrouter/free", "liquid/lfm-2.5-2.6b:free", "nvidia/nemotron-3-nano-30b-a3b:free", "google/gemma-4-31b-it:free"];
-    const selectedModel = MODELS[0];
+    const MODELS = STUVO_FALLBACK_MODELS;
+    const selectedModel = MODELS[Math.min(attempt, MODELS.length - 1)];
+    const messages = buildOpenRouterMessages(prompt);
     try {
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
             method: "POST",
@@ -703,7 +792,7 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
             },
             body: JSON.stringify({
                 model: selectedModel,
-                messages: [{ role: "user", content: typeof prompt === 'string' ? prompt : prompt.map(m => m.content || m).join('\n') }],
+                messages,
                 max_tokens: 1000,
                 temperature: 0.7
             })
@@ -712,8 +801,14 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
             if (attempt < MODELS.length - 1) {
                 return callDirectOpenRouterFromAPI(prompt, apiKey, attempt + 1);
             }
-            const errText = await response.text();
-            throw new Error("OpenRouter error (" + response.status + "): " + errText);
+            const errText = await response.text().catch(() => '');
+            if (response.status === 401 || response.status === 403) {
+                throw new Error("OpenRouter rejected the API key (HTTP " + response.status + "). Check Settings → AI Key and save a valid sk-or-v1-... key.");
+            }
+            if (response.status === 429) {
+                throw new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
+            }
+            throw new Error("OpenRouter error (" + response.status + "): " + (errText || 'request failed').slice(0, 300));
         }
         const rawText = await response.text();
         let data;
@@ -722,8 +817,12 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
         if (!data.choices || !data.choices[0] || !data.choices[0].message) throw new Error("Unexpected OpenRouter response");
         return data.choices[0].message.content;
     } catch (err) {
-        if (attempt < 4) {
-            await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+        // Retry across fallback models for transient/network errors only —
+        // never retry auth errors (they will fail identically on every model).
+        const msg = String((err && err.message) || '');
+        const isAuth = msg.includes('rejected the API key') || msg.includes('(HTTP 401') || msg.includes('(HTTP 403');
+        if (!isAuth && attempt < MODELS.length - 1) {
+            await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
             return callDirectOpenRouterFromAPI(prompt, apiKey, attempt + 1);
         }
         throw err;
@@ -731,33 +830,48 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
 }
 
 async function safeApiCall(endpoint, payload) {
+    let response;
     try {
-        const response = await fetch(endpoint, {
+        response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        if (response.ok) {
-            const data = await response.json();
-            if (data.error) throw new Error(data.error);
-            return data;
-        }
-        // If static web server returns 405 Method Not Allowed or 404 Not Found, use client-side direct fallback
-        if (response.status === 405 || response.status === 404) {
-            console.warn(`Endpoint ${endpoint} returned HTTP ${response.status}. Using direct AI fallback...`);
-            return await handleClientFallback(endpoint, payload);
-        }
-        const errorText = await response.text();
-        console.error('AI service error:', response.status, errorText);
-        throw new Error(`AI service error (${response.status}). Please try again.`);
     } catch (err) {
-        // If network fetch fails (e.g. static local server), attempt direct AI fallback
-        if (err.message && (err.message.includes('405') || err.message.includes('404') || err.message.includes('Failed to fetch') || err.name === 'TypeError')) {
-            console.warn(`Fallback triggered for ${endpoint} due to:`, err.message);
-            return await handleClientFallback(endpoint, payload);
-        }
-        throw err;
+        // Network failure (static host, offline, CORS): try per-user-key fallback.
+        console.warn(`Fallback triggered for ${endpoint} due to network error:`, err && err.message);
+        return await handleClientFallback(endpoint, payload);
     }
+    if (response.ok) {
+        const data = await response.json().catch(() => ({}));
+        if (data.error) throw new Error(data.error);
+        return data;
+    }
+    // If static web server returns 405 Method Not Allowed or 404 Not Found, use client-side direct fallback
+    if (response.status === 405 || response.status === 404) {
+        console.warn(`Endpoint ${endpoint} returned HTTP ${response.status}. Using direct AI fallback...`);
+        return await handleClientFallback(endpoint, payload);
+    }
+    const errorText = await response.text().catch(() => '');
+    let serverMsg = '';
+    try {
+        const parsed = JSON.parse(errorText);
+        serverMsg = parsed.error || '';
+    } catch (e) { serverMsg = errorText; }
+    console.error('AI service error:', response.status, errorText);
+    const missingServerKey = /OPENROUTER_API_KEY|environment variable is not set|No OpenRouter key/i.test(serverMsg || '');
+    if (missingServerKey && hasUserApiKey()) {
+        // Server env missing but user provided their own key — serve via direct fallback.
+        console.warn(`Server key missing for ${endpoint}; using per-user key fallback...`);
+        return await handleClientFallback(endpoint, payload);
+    }
+    if (missingServerKey) {
+        throw new Error('AI server has no API key configured. ' + aiSetupHint());
+    }
+    if (response.status === 429) {
+        throw new Error('AI is rate-limited right now. Wait a minute and try again.');
+    }
+    throw new Error(serverMsg ? `AI service error: ${String(serverMsg).slice(0, 280)}` : `AI service error (${response.status}). Please try again.`);
 }
 
 async function handleClientFallback(endpoint, payload = {}) {
@@ -901,6 +1015,133 @@ function renderFormattedAnswer(text) {
   ).join('');
 }
 if (typeof window !== 'undefined') window.renderFormattedAnswer = renderFormattedAnswer;
+if (typeof window !== 'undefined') {
+    window.getUserApiKey = getUserApiKey;
+    window.setUserApiKey = setUserApiKey;
+    window.clearUserApiKey = clearUserApiKey;
+    window.hasUserApiKey = hasUserApiKey;
+    window.checkServerHasKey = checkServerHasKey;
+    window.openAiKeySettings = openAiKeySettings;
+}
+
+// ─── AI Key Settings UI (per-user OpenRouter key, browser-only) ───
+function ensureAiKeyStyles() {
+    if (document.getElementById('ai-key-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'ai-key-styles';
+    style.textContent = `
+        .ai-key-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 1200; display: flex; align-items: center; justify-content: center; padding: 16px; }
+        .ai-key-modal { width: 100%; max-width: 480px; background: rgba(17,24,39,0.95); border: 1px solid var(--glass-border); border-radius: 20px; padding: 22px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+        .ai-key-title { font-size: 17px; font-weight: 800; color: var(--text); margin: 0 0 6px; }
+        .ai-key-sub { font-size: 13px; color: var(--text-dim); line-height: 1.6; margin: 0 0 14px; }
+        .ai-key-sub a { color: #C4B5FD; }
+        .ai-key-row { display: flex; gap: 8px; }
+        .ai-key-input { flex: 1; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: var(--text); padding: 11px 12px; border-radius: 12px; font-size: 13px; font-family: ui-monospace, monospace; min-width: 0; }
+        .ai-key-input:focus { outline: none; border-color: var(--violet); }
+        .ai-key-toggle { flex-shrink: 0; width: 44px; border-radius: 12px; background: var(--glass); border: 1px solid var(--glass-border); color: var(--text); cursor: pointer; font-size: 16px; }
+        .ai-key-status { font-size: 12px; margin-top: 10px; min-height: 18px; }
+        .ai-key-status.ok { color: #6EE7B7; }
+        .ai-key-status.err { color: #FCA5A5; }
+        .ai-key-status.dim { color: var(--text-dim); }
+        .ai-key-actions { display: flex; gap: 10px; margin-top: 14px; }
+        .ai-key-actions .btn { flex: 1; }
+    `;
+    document.head.appendChild(style);
+}
+
+function aiKeyStatusText() {
+    if (hasUserApiKey()) return { cls: 'ok', text: '✓ Personal key saved in this browser.' };
+    return { cls: 'dim', text: 'No personal key saved — app uses the shared server key.' };
+}
+
+function openAiKeySettings() {
+    ensureAiKeyStyles();
+    if (document.getElementById('ai-key-overlay')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'ai-key-overlay';
+    overlay.className = 'ai-key-overlay';
+    const st = aiKeyStatusText();
+    overlay.innerHTML = `
+        <div class="ai-key-modal" role="dialog" aria-modal="true" aria-label="AI key settings">
+            <h3 class="ai-key-title">🤖 AI Key</h3>
+            <p class="ai-key-sub">By default Stuvo uses the shared server key. Optionally add your own free key from <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a> — it stays only in this browser.</p>
+            <div class="ai-key-row">
+                <input id="ai-key-input" class="ai-key-input" type="password" placeholder="sk-or-v1-..." autocomplete="off" spellcheck="false" />
+                <button id="ai-key-toggle" class="ai-key-toggle" aria-label="Show or hide key">👁</button>
+            </div>
+            <div id="ai-key-status" class="ai-key-status ${st.cls}">${st.text}</div>
+            <div class="ai-key-actions">
+                <button id="ai-key-remove" class="btn btn-secondary">Remove</button>
+                <button id="ai-key-close" class="btn btn-secondary">Close</button>
+                <button id="ai-key-save" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+    const input = overlay.querySelector('#ai-key-input');
+    const status = overlay.querySelector('#ai-key-status');
+    const setStatus = (cls, text) => { status.className = 'ai-key-status ' + cls; status.textContent = text; };
+    try { input.value = getUserApiKey(); } catch (e) {}
+    overlay.querySelector('#ai-key-toggle').addEventListener('click', () => {
+        input.type = input.type === 'password' ? 'text' : 'password';
+    });
+    overlay.querySelector('#ai-key-save').addEventListener('click', () => {
+        const v = input.value.trim();
+        if (!v) { setStatus('err', 'Paste a key first, or press Remove to clear.'); return; }
+        if (!isValidOpenRouterKey(v)) { setStatus('err', 'That does not look like an OpenRouter key (expected sk-or-v1-...).'); return; }
+        if (setUserApiKey(v)) {
+            setStatus('ok', '✓ Saved. AI will prefer your key on this device.');
+            try { if (typeof showToast === 'function') showToast('AI key saved in this browser', 'success'); } catch (e) {}
+        } else {
+            setStatus('err', 'Could not save the key in this browser.');
+        }
+    });
+    overlay.querySelector('#ai-key-remove').addEventListener('click', () => {
+        clearUserApiKey();
+        input.value = '';
+        setStatus('dim', 'Removed. App uses the shared server key.');
+        try { if (typeof showToast === 'function') showToast('Personal AI key removed', 'info'); } catch (e) {}
+    });
+    const close = () => overlay.remove();
+    overlay.querySelector('#ai-key-close').addEventListener('click', close);
+    overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', function esc(e) {
+        if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+    });
+    setTimeout(() => { try { input.focus(); } catch (e) {} }, 50);
+}
+
+// Mount a persistent 🤖 AI Key button in the topbar (all roles, desktop+mobile).
+function initAiKeyButton() {
+    try {
+        const actions = document.querySelector('.topbar-actions');
+        if (!actions) return;
+        if (document.getElementById('ai-key-btn')) return;
+        ensureAiKeyStyles();
+        const btn = document.createElement('button');
+        btn.id = 'ai-key-btn';
+        btn.className = 'global-search-btn';
+        btn.setAttribute('aria-label', 'AI key settings');
+        btn.title = 'AI key settings';
+        btn.textContent = '🤖';
+        const searchBtn = document.getElementById('global-search-btn');
+        if (searchBtn && searchBtn.parentNode === actions) actions.insertBefore(btn, searchBtn);
+        else actions.prepend(btn);
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            openAiKeySettings();
+        });
+    } catch (e) {}
+}
+if (typeof window !== 'undefined') {
+    window.initAiKeyButton = initAiKeyButton;
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => { setTimeout(initAiKeyButton, 300); });
+    } else {
+        setTimeout(initAiKeyButton, 300);
+    }
+    window.addEventListener('hashchange', () => setTimeout(initAiKeyButton, 300));
+}
 
 // ─── D.4 Global Search ─────────────────────────────────────
 // Implements openGlobalSearch() that:

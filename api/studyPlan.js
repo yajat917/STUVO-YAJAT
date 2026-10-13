@@ -2,11 +2,11 @@
 // Body: { examDate, subjects, weakTopics, hours }
 // Returns: { plan: string }
 
-const { callOpenRouter } = require('./_lib/openrouter');
+const { callOpenRouter, getApiKey } = require('./_lib/openrouter');
 
 module.exports = async (req, res) => {
-    if (!process.env.OPENROUTER_API_KEY) {
-        return res.status(500).json({ error: 'OPENROUTER_API_KEY environment variable is not set.' });
+    if (!getApiKey()) {
+        return res.status(500).json({ error: 'OPENROUTER_API_KEY environment variable is not set. Add it in Vercel → Settings → Environment Variables (Production + Preview) and redeploy.' });
     }
 
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });

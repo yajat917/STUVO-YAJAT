@@ -7,10 +7,28 @@ const FALLBACK_MODEL = "openrouter/free";
 // the key stays server-side.
 const OPENROUTER_API_KEY = "";
 
+function getStudyOsApiKey() {
+  if (OPENROUTER_API_KEY) return OPENROUTER_API_KEY;
+  try {
+    if (typeof localStorage === 'undefined') return '';
+    const direct = (localStorage.getItem('studyos_openrouter_key') || localStorage.getItem('openrouter_api_key') || '').trim();
+    if (direct) return direct;
+    // Legacy mirror kept in studyos-data.apiKey by profile.html
+    try {
+      const raw = localStorage.getItem('studyos-data');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.apiKey === 'string' && parsed.apiKey.trim()) return parsed.apiKey.trim();
+      }
+    } catch (e) {}
+  } catch (e) {}
+  return '';
+}
+
 async function callOpenRouter(messages, options = {}) {
-  const apiKey = OPENROUTER_API_KEY || (typeof localStorage !== 'undefined' ? localStorage.getItem('studyos_openrouter_key') : '');
+  const apiKey = getStudyOsApiKey();
   if (!apiKey) {
-    throw new Error('AI unavailable: no API key configured. Add your OpenRouter API key in Profile settings (stored only in this browser) to activate full AI explanations.');
+    throw new Error('AI unavailable: no API key configured. Add your OpenRouter API key on the Profile page (Profile → OpenRouter API Key, stored only in this browser) to activate full AI explanations.');
   }
 
   const payload = {

@@ -68,6 +68,16 @@
 
 
 
+        <div class="form-group">
+          <label for="openrouter-key">OpenRouter API Key <span style="opacity:.65;font-weight:400">(optional — enables full AI; stored only in this browser)</span></label>
+          <div style="display:flex;gap:8px;">
+            <input type="password" id="openrouter-key" class="input" placeholder="sk-or-v1-..." autocomplete="off" spellcheck="false" style="flex:1;min-width:0;font-family:ui-monospace,monospace;">
+            <button type="button" id="toggle-key" class="btn btn-secondary" aria-label="Show or hide API key">👁</button>
+          </div>
+          <div id="key-status" style="font-size:12px;margin-top:6px;opacity:.75;"></div>
+          <div style="font-size:12px;margin-top:4px;opacity:.75;">Get a free key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. Leave blank to use demo answers.</div>
+        </div>
+
         <button id="save-btn" class="btn btn-primary btn-block">Save Profile</button>
       </div>
     </div>

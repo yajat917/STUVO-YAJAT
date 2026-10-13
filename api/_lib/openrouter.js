@@ -201,4 +201,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, FORMAT_STANDARD, STUVO_TUTOR_VOICE };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey };
