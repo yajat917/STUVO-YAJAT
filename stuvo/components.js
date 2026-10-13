@@ -899,7 +899,23 @@ function sanitizeServerMessage(msg, maxLen) {
     return s.trim();
 }
 
+// Client-side cooldown breaker state (see safeApiCall). Timestamp (ms) until
+// which /api/ai requests fail fast locally after an HTTP 429.
+let _aiCooldownUntil = 0;
+
 async function safeApiCall(endpoint, payload) {
+    // Client-side cooldown breaker: after an HTTP 429 on /api/ai, fail fast
+    // locally (no request sent) until the indicated wait elapses. This stops
+    // a page with several auto-firing AI features (Study Hub loads Next Best
+    // Action, nudges, schedule text on every visit) from sending a burst of
+    // doomed requests into an already-throttled provider, and stops users
+    // hammering retry during an outage. Any successful response clears it.
+    // Server-side abuse protection is untouched — this only skips requests
+    // the server would reject anyway.
+    if (endpoint && endpoint.indexOf('/api/ai') !== -1 && Date.now() < _aiCooldownUntil) {
+        const waitLeft = Math.max(1, Math.ceil((_aiCooldownUntil - Date.now()) / 1000));
+        throw new Error(`AI is cooling down after rate limiting (HTTP 429 for ${endpoint}). Please wait about ${waitLeft}s and retry once — no request was sent.`);
+    }
     let response;
     try {
         response = await fetch(endpoint, {
@@ -915,6 +931,7 @@ async function safeApiCall(endpoint, payload) {
     const status = response.status;
     const ct = (response.headers && response.headers.get) ? (response.headers.get('content-type') || '') : '';
     if (response.ok) {
+        _aiCooldownUntil = 0; // provider recovered — lift any local cooldown
         // Read as text first: some hosts return the SPA fallback (HTML) with
         // HTTP 200 for unknown /api/* routes. Returning {} for that would
         // surface downstream as misleading errors like "No question returned".
@@ -958,12 +975,14 @@ async function safeApiCall(endpoint, payload) {
     let serverCode = '';
     let serverRetryAfter = 0;
     let serverModel = '';
+    let serverScope = '';
     try {
         const parsed = JSON.parse(errorText);
         serverMsg = parsed.error || '';
         serverCode = parsed.code || '';
         if (Number(parsed.retryAfter) > 0) serverRetryAfter = Math.min(Math.floor(Number(parsed.retryAfter)), 600);
         serverModel = parsed.model || '';
+        serverScope = parsed.scope || '';
     } catch (e) { serverMsg = errorText; }
     // Honor a Retry-After response header when the JSON body carries none.
     if (!serverRetryAfter) {
@@ -994,16 +1013,22 @@ async function safeApiCall(endpoint, payload) {
         throw new Error(`AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON; HTTP ${status}). The server deployment must route ${endpoint} to the API function before any SPA fallback — redeploy with the api/ functions and OPENROUTER_API_KEY set server-side, then retry.`);
     }
     if (status === 429) {
-        // Distinguish OUR application limiter from the UPSTREAM provider
-        // limit — they need different user actions. Deliberately no
-        // automatic retry or key fallback here: re-sending would add load
-        // to whichever side is already throttling. The user retries once
-        // after the indicated wait.
+        // Distinguish OUR application limiter from UPSTREAM limits — and
+        // upstream OpenRouter platform limits from provider limits (scope).
+        // They need different user actions. Deliberately no automatic retry
+        // or key fallback here: re-sending would add load to whichever side
+        // is already throttling. The user retries once after the indicated
+        // wait. The local cooldown below makes that wait self-enforcing:
+        // further /api/ai calls fail fast without sending requests.
         const waitSecs = serverRetryAfter > 0 ? serverRetryAfter : 60;
+        _aiCooldownUntil = Date.now() + Math.min(waitSecs, 300) * 1000;
         const isAppLimit = serverCode === 'APP_RATE_LIMIT'
             || (!serverCode && /too many requests/i.test(serverMsg || '') && !/openrouter|provider/i.test(serverMsg || ''));
         if (isAppLimit) {
             throw new Error(`You're sending requests too quickly (application limit, HTTP 429 for ${endpoint}). Please wait about ${waitSecs}s and try again — no need to resend repeatedly.`);
+        }
+        if (serverScope === 'platform') {
+            throw new Error(`The AI service is rate-limited right now (platform limit, HTTP 429 for ${endpoint}). Please wait about ${waitSecs}s and retry once — your message is safe.`);
         }
         const modelBit = serverModel ? ` (provider limit, model ${sanitizeServerMessage(serverModel, 80)})` : '';
         throw new Error(`The AI provider is rate-limited right now (HTTP 429 for ${endpoint}${modelBit}). Please wait about ${waitSecs}s and retry once — your message is safe.`);

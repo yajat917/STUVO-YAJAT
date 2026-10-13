@@ -1555,8 +1555,26 @@ function bindPractice(container, ctx) {
         } catch (e) {}
         try {
             const data = await safeApiCall('/api/ai', { action: 'generateQuiz', topic, subject: quizSubject, grade: ctx.grade, languageName: ctx.languageName, difficulty, questionCount: count, sourceText, previousHashes: previousHashes.slice(0, 50) });
-            quizQuestions = data.questions || data.quiz || [];
-            if (!quizQuestions.length) throw new Error('No questions returned');
+            // Validate items client-side with the same schema the server
+            // enforces (question string + exactly 4 options + correctIndex
+            // 0-3). The per-user-key fallback path returns model JSON without
+            // server-side validation, so a malformed item would otherwise
+            // crash hashQ below ("Cannot read properties of undefined
+            // (reading 'length')"). Drop unusable items; if none remain,
+            // fail loudly with a retry message (topic input is preserved).
+            const qraw = (data && typeof data === 'object') ? (Array.isArray(data.questions) ? data.questions : (Array.isArray(data.quiz) ? data.quiz : [])) : [];
+            quizQuestions = qraw.filter(q => q && typeof q.question === 'string' && q.question.trim()
+                && Array.isArray(q.options) && q.options.length === 4
+                && q.options.every(o => typeof o === 'string'));
+            quizQuestions.forEach(q => {
+                let idx = Number(q.correctIndex);
+                if (!Number.isInteger(idx) || idx < 0 || idx > 3) idx = 0;
+                q.correctIndex = idx;
+                q.question = String(q.question);
+                q.options = q.options.map(o => String(o));
+                q.explanation = q.explanation ? String(q.explanation) : '';
+            });
+            if (!quizQuestions.length) throw new Error('The quiz generator returned an incomplete format. Please try again.');
             quizCurrentIdx = 0; quizScore = 0; quizUserAnswers = [];
             quizHashes = quizQuestions.map(q => hashQ(q.question));
             renderQuizQuestion();

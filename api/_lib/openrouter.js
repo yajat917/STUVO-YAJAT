@@ -107,6 +107,56 @@ function parseRetryAfterSecs(headers) {
   return 0;
 }
 
+// ─── Upstream error classification ────────────────────────────
+// Per OpenRouter's errors documentation, provider failures arrive as
+// {error: {code, message, metadata?: {error_type, provider_code, ...}}}.
+// error_type is the stable field to branch on (rate_limit_exceeded,
+// provider_overloaded, provider_unavailable, ...). provider_code carries
+// the upstream provider's own code when available.
+function parseUpstreamErrorBody(errText) {
+  try {
+    const parsed = JSON.parse(errText);
+    const e = parsed && parsed.error;
+    if (!e || typeof e !== 'object') return { code: 0, errorType: '', providerCode: '', message: '' };
+    const md = e.metadata && typeof e.metadata === 'object' ? e.metadata : {};
+    const pick = (...vals) => { for (const v of vals) if (typeof v === 'string' && v) return v; return ''; };
+    return {
+      code: Number(e.code) || 0,
+      errorType: pick(md.error_type, md.errorType),
+      providerCode: pick(md.provider_code, md.providerCode),
+      message: typeof e.message === 'string' ? e.message : '',
+    };
+  } catch (x) {
+    return { code: 0, errorType: '', providerCode: '', message: '' };
+  }
+}
+function rateLimitScope(info) {
+  // 'provider': the upstream provider's own code is surfaced — that model's
+  //   serving provider throttled us (a different model/provider may succeed).
+  // 'platform': a typed OpenRouter rate-limit error with no provider code —
+  //   OpenRouter's own key/model limiter fired (same key serves the fallback,
+  //   so it is less likely to help, but still allowed once: free-tier limits
+  //   are usually per-model capacity).
+  // 'unknown': body unparseable or untyped — reported honestly as such.
+  if (info.providerCode) return 'provider';
+  if (info.errorType === 'rate_limit_exceeded') return 'platform';
+  return 'unknown';
+}
+// Fills a 429 error with consistent safe diagnostics. Returns the parsed
+// upstream info for logging. Never touches keys, headers, or prompts.
+function attachRateLimitContext(e, errText, retryAfterSecs, triedModels, selectedModel, corrId) {
+  const info = parseUpstreamErrorBody(errText);
+  e.status = 429;
+  e.code = 'UPSTREAM_RATE_LIMIT';
+  e.model = selectedModel;
+  e.corrId = corrId;
+  e.triedModels = triedModels;
+  e.scope = rateLimitScope(info);
+  if (info.errorType) e.upstreamType = info.errorType;
+  if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
+  return info;
+}
+
 function isAuthErrorMessage(msg) {
   const m = String(msg || '');
   return /401|403|rejected the API key|invalid.*key|unauthorized|forbidden|402|payment|credits/i.test(m);
@@ -231,7 +281,9 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     const retryAfterSecs = parseRetryAfterSecs(response.headers);
-    console.warn(`[${corrId}] Model ${selectedModel} returned HTTP ${response.status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}: ${upstreamPreview(errText)}`);
+    const upInfo = response.status === 429 ? parseUpstreamErrorBody(errText) : null;
+    const scopeBit = upInfo ? ` scope=${rateLimitScope(upInfo)}${upInfo.errorType ? ` type=${upInfo.errorType}` : ''}` : '';
+    console.warn(`[${corrId}] Model ${selectedModel} returned HTTP ${response.status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}${scopeBit}: ${upstreamPreview(errText)}`);
     if (response.status === 401 || response.status === 403) {
       const e = new Error("OpenRouter rejected the API key (HTTP " + response.status + "). Ask the admin to check OPENROUTER_API_KEY.");
       e.status = 500;
@@ -250,12 +302,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
           // Every configured model already failed for this request —
           // stop here and tell the user to retry later (never loop).
           const e = new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
-          e.status = 429;
-          e.code = 'UPSTREAM_RATE_LIMIT';
-          e.model = selectedModel;
-          e.corrId = corrId;
-          e.triedModels = tried;
-          if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
+          attachRateLimitContext(e, errText, retryAfterSecs, tried, selectedModel, corrId);
           throw e;
         }
         console.log(`[${corrId}] 429 on ${selectedModel}; single fallback to ${fb}...`);
@@ -277,13 +324,12 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     e.status = response.status === 429 ? 429 : 502;
     if (response.status === 429) {
       // Coded so api/ai.js and the client can distinguish provider rate
-      // limits from our own application limiter. `model` is the last model
-      // attempted; `triedModels` lists every model attempted this request.
+      // limits from our own application limiter AND OpenRouter platform
+      // limits from upstream provider limits (see rateLimitScope).
+      // `model` is the last model attempted; `triedModels` lists every
+      // model attempted this request.
       e.code = 'UPSTREAM_RATE_LIMIT';
-      e.model = selectedModel;
-      e.corrId = corrId;
-      e.triedModels = [...triedModels, selectedModel];
-      if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
+      attachRateLimitContext(e, errText, retryAfterSecs, [...triedModels, selectedModel], selectedModel, corrId);
     }
     throw e;
   }
@@ -304,6 +350,27 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
 
   if (data.error) {
     const msg = String((data.error && data.error.message) || "OpenRouter error");
+    // A provider failure can arrive as HTTP 200 with an error body (the
+    // status line was already committed upstream). A 429 in the body must
+    // be handled exactly like an HTTP 429 — never as a generic 502.
+    const bodyInfo = parseUpstreamErrorBody(JSON.stringify(data));
+    const isRateLimitBody = Number(data.error && data.error.code) === 429 || bodyInfo.errorType === 'rate_limit_exceeded';
+    if (isRateLimitBody) {
+      const retryAfterSecs = parseRetryAfterSecs(response.headers);
+      if (canRetry) {
+        const tried = [...triedModels, selectedModel];
+        const fb = pickFallbackModel();
+        if (fb) {
+          console.log(`[${corrId}] 429-in-200-body on ${selectedModel} (scope=${rateLimitScope(bodyInfo)}); single fallback to ${fb}...`);
+          const waitSecs = retryAfterSecs > 0 ? Math.min(retryAfterSecs, 5) : (attempt + 1);
+          await new Promise(r => setTimeout(r, waitSecs * 1000));
+          return callOpenRouter(prompt, withNextModel(), attempt + 1, tried);
+        }
+      }
+      const e = new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
+      attachRateLimitContext(e, JSON.stringify(data.error), retryAfterSecs, [...triedModels, selectedModel], selectedModel, corrId);
+      throw e;
+    }
     if (!isAuthErrorMessage(msg) && canRetry) {
       console.warn(`[${corrId}] Provider error on ${selectedModel}: ${upstreamPreview(msg)}. Retrying with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
@@ -496,4 +563,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, attachUpstreamContext, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, attachUpstreamContext, parseUpstreamErrorBody, rateLimitScope, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };

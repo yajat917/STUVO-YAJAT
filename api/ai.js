@@ -433,7 +433,8 @@ module.exports = async (req, res) => {
     const status = e.status || 500;
     const message = e.message || 'AI service error. Please try again.';
     // Pass through machine-readable diagnostics so the client can tell an
-    // application rate limit apart from an upstream provider rate limit.
+    // application rate limit apart from upstream limits, and OpenRouter
+    // platform limits apart from provider limits (scope/upstreamType).
     // Never include prompts, keys, or headers — only safe metadata.
     const payload = { error: message };
     if (e.code) payload.code = e.code;
@@ -441,8 +442,10 @@ module.exports = async (req, res) => {
     if (e.model) payload.model = e.model;
     if (e.corrId) payload.corrId = e.corrId;
     if (Array.isArray(e.triedModels) && e.triedModels.length) payload.triedModels = e.triedModels.slice(0, 5);
+    if (e.scope) payload.scope = e.scope;
+    if (e.upstreamType) payload.upstreamType = e.upstreamType;
     console.error(`Error in action "${action}":`, message,
-      e.code ? `(code=${e.code}${e.model ? `, model=${e.model}` : ''}${e.corrId ? `, corrId=${e.corrId}` : ''})` : '');
+      e.code ? `(code=${e.code}${e.scope ? `, scope=${e.scope}` : ''}${e.model ? `, model=${e.model}` : ''}${e.corrId ? `, corrId=${e.corrId}` : ''})` : '');
     res.status(status).json(payload);
   }
 };
