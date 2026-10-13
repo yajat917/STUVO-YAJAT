@@ -704,7 +704,7 @@ async function checkAndCreateDeadlineNotifications(uid, classIds) {
 const STUVO_FALLBACK_MODELS = [
     "google/gemma-4-31b-it:free",
     "liquid/lfm-2.5-2.6b:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free"
+    "google/gemma-4-26b-a4b-it:free"
 ];
 const STUVO_AI_KEY_NAMES = ['studyos_openrouter_key', 'openrouter_api_key'];
 
@@ -892,8 +892,21 @@ async function safeApiCall(endpoint, payload) {
         return await handleClientFallback(endpoint, payload);
     }
     if (response.ok) {
-        const data = await response.json().catch(() => ({}));
-        if (data.error) throw new Error(data.error);
+        // Read as text first: some hosts return the SPA fallback (HTML) with
+        // HTTP 200 for unknown /api/* routes. Returning {} for that would
+        // surface downstream as misleading errors like "No question returned".
+        const raw = await response.text().catch(() => '');
+        const ct = (response.headers && response.headers.get) ? (response.headers.get('content-type') || '') : '';
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (e) {
+            const looksHtml = /^\s*</.test(raw) || /text\/html/i.test(ct);
+            throw new Error(looksHtml
+                ? `AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON). Check deployment API routes, then retry.`
+                : `AI endpoint ${endpoint} returned a non-JSON response. Please try again.`);
+        }
+        if (data && typeof data === 'object' && data.error) throw new Error(data.error);
         return data;
     }
     // If static web server returns 405 Method Not Allowed or 404 Not Found, use client-side direct fallback

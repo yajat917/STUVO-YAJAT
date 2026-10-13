@@ -31,7 +31,7 @@ getApiKey();
 const MODELS = [
   "google/gemma-4-31b-it:free",
   "liquid/lfm-2.5-2.6b:free",
-  "nvidia/nemotron-3-nano-30b-a3b:free"
+  "google/gemma-4-26b-a4b-it:free"
 ];
 
 const REQUEST_TIMEOUT_MS = 20000;
@@ -70,6 +70,24 @@ function isRetryableStatus(status) {
 function isAuthErrorMessage(msg) {
   const m = String(msg || '');
   return /401|403|rejected the API key|invalid.*key|unauthorized|forbidden|402|payment|credits/i.test(m);
+}
+
+// Some providers return message.content as an array of content parts
+// ([{type:'text', text:'...'}]) instead of a plain string. Normalize to text
+// so such responses aren't misclassified as empty.
+function normalizeContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map(p => {
+      if (typeof p === 'string') return p;
+      if (p && typeof p === 'object') {
+        if (typeof p.text === 'string') return p.text;
+        if (typeof p.content === 'string') return p.content;
+      }
+      return '';
+    }).join('');
+  }
+  return content;
 }
 
 async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
@@ -212,7 +230,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     throw e;
   }
 
-  const content = data.choices[0].message.content;
+  const content = normalizeContent(data.choices[0].message.content);
   if (content === null || content === undefined || String(content).trim().length === 0) {
     const e = new Error("The AI model returned an empty response. Please try again.");
     e.status = 502;
@@ -275,4 +293,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS };

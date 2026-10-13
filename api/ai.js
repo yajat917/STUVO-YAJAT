@@ -172,11 +172,12 @@ async function handlePracticeBit(body) {
   const content = await callOpenRouter(prompt);
   const text = (content === null || content === undefined) ? '' : String(content);
   const result = parseModelJSON(text, 'The question generator returned an unexpected format. Please try again.');
-  if (!result.question || !result.correctAnswer) {
+  // Models sometimes use "answer" instead of the requested "correctAnswer".
+  if (!result.question || !(result.correctAnswer || result.answer)) {
     throw { status: 502, message: 'The question generator returned an incomplete question. Please try again.' };
   }
   result.question = cleanMathFormatting(String(result.question));
-  result.correctAnswer = cleanMathFormatting(String(result.correctAnswer));
+  result.correctAnswer = cleanMathFormatting(String(result.correctAnswer || result.answer));
   if (result.hint) result.hint = cleanMathFormatting(String(result.hint));
   return { subject: finalSubject, question: result.question, correctAnswer: result.correctAnswer, hint: result.hint || '' };
 }
