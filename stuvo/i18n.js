@@ -328,6 +328,14 @@ function translateTextWithMap(text, map){
   return out;
 }
 
+// Convert an HTML attribute name to a valid DOMStringMap key.
+// 'aria-label' -> 'i18nAttrAriaLabel', 'placeholder' -> 'i18nAttrPlaceholder'.
+// A hyphen in a dataset property name throws:
+// "Failed to set a named property 'i18nAttrAria-label' on 'DOMStringMap'".
+function attrToDatasetKey(attr){
+  return 'i18nAttr' + String(attr).split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
+}
+
 function translateDOM(root){
   if(!root || !root.querySelectorAll) return;
   const map = buildReverseMap();
@@ -369,16 +377,17 @@ function translateDOM(root){
       node.nodeValue = translated;
     }
   }
-  // Attributes: placeholder, title, aria-label, alt
-  const attrNames = ['placeholder','title','aria-label','alt'];
+  // Attributes: placeholder, title, aria-label, aria-description, alt
+  // NOTE: dataset keys must be valid identifiers (no hyphens). Convert
+  // hyphenated attribute names to camelCase, e.g. aria-label -> i18nAttrAriaLabel.
+  const attrNames = ['placeholder','title','aria-label','aria-description','alt'];
   const attrElements = root.querySelectorAll ? root.querySelectorAll('*') : [];
   for(const el of attrElements){
     for(const attr of attrNames){
       const val = el.getAttribute(attr);
       if(val && val.trim()){
-        const key = `_attr_${attr}_${val}`;
         // Store original in dataset
-        const dsKey = 'i18nAttr' + attr.charAt(0).toUpperCase() + attr.slice(1);
+        const dsKey = attrToDatasetKey(attr);
         let origAttr = el.dataset[dsKey];
         if(origAttr === undefined){
           el.dataset[dsKey] = val;
