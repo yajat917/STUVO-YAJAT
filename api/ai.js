@@ -432,7 +432,16 @@ module.exports = async (req, res) => {
   } catch (e) {
     const status = e.status || 500;
     const message = e.message || 'AI service error. Please try again.';
-    console.error(`Error in action "${action}":`, message);
-    res.status(status).json({ error: message });
+    // Pass through machine-readable diagnostics so the client can tell an
+    // application rate limit apart from an upstream provider rate limit.
+    // Never include prompts, keys, or headers — only safe metadata.
+    const payload = { error: message };
+    if (e.code) payload.code = e.code;
+    if (e.retryAfter) payload.retryAfter = e.retryAfter;
+    if (e.model) payload.model = e.model;
+    if (e.corrId) payload.corrId = e.corrId;
+    console.error(`Error in action "${action}":`, message,
+      e.code ? `(code=${e.code}${e.model ? `, model=${e.model}` : ''}${e.corrId ? `, corrId=${e.corrId}` : ''})` : '');
+    res.status(status).json(payload);
   }
 };

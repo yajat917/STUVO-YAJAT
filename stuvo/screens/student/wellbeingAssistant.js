@@ -74,6 +74,7 @@ async function renderStudentWellbeingAssistant(container) {
   let chatId = null;
   let conversationHistory = []; // [{role:'user'|'assistant', content:string}]
   let currentEscalation = false;
+  let isSending = false; // guard: one in-flight request per form (no duplicates)
 
   // Try to restore last chatId from session
   try { chatId = sessionStorage.getItem('stuvo_wb_chatId') || null; } catch {}
@@ -248,8 +249,14 @@ async function renderStudentWellbeingAssistant(container) {
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    // A single form submission must send exactly one request: rapid Enter
+    // presses or double-clicks while a reply is in flight are ignored.
+    // (Each request can fan out to several upstream model attempts, so a
+    // duplicate here multiplies provider load and can itself trigger 429s.)
+    if (isSending) return;
     const prompt = input.value.trim();
     if (!prompt) return;
+    isSending = true;
     input.value = '';
     addBubble('user', prompt);
     conversationHistory.push({ role: 'user', content: prompt });
@@ -297,6 +304,7 @@ async function renderStudentWellbeingAssistant(container) {
         + ' If you need support right now, please reach out to a trusted adult or counselor.', { system: true });
       showToast(err.message || 'Failed to get response', 'error');
     } finally {
+      isSending = false;
       sendBtn.disabled = false; sendBtn.textContent = 'Send ↑';
       input.focus();
     }
@@ -305,6 +313,7 @@ async function renderStudentWellbeingAssistant(container) {
   // Also allow Enter to send (Shift+Enter for newline)
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
+      if (isSending) return;
       e.preventDefault();
       form.dispatchEvent(new Event('submit', { cancelable:true }));
     }

@@ -67,6 +67,33 @@ function isRetryableStatus(status) {
   return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
+// ─── Safe 429 diagnostics ─────────────────────────────────────
+// Every upstream call gets a correlation id so a 429 can be traced through
+// server logs without ever logging keys, auth headers, or user messages.
+// Logs carry only: correlation id, model id, upstream HTTP status, and a
+// short capped preview of the upstream error body.
+let _openRouterReqSeq = 0;
+function newCorrelationId() {
+  _openRouterReqSeq = (_openRouterReqSeq + 1) % 1000000;
+  return 'or-' + Date.now().toString(36) + '-' + _openRouterReqSeq.toString(36) + Math.random().toString(36).slice(2, 6);
+}
+function upstreamPreview(text) {
+  return String(text || '').replace(/\s+/g, ' ').slice(0, 200);
+}
+function parseRetryAfterSecs(headers) {
+  try {
+    const raw = headers && typeof headers.get === 'function'
+      ? headers.get('retry-after')
+      : headers && (headers['retry-after'] || headers['Retry-After']);
+    if (raw === null || raw === undefined || raw === '') return 0;
+    const n = Number(String(raw).trim());
+    if (Number.isFinite(n) && n > 0) return Math.min(Math.floor(n), 30);
+    const t = Date.parse(String(raw));
+    if (!isNaN(t)) return Math.min(Math.max(0, Math.round((t - Date.now()) / 1000)), 30);
+  } catch (e) {}
+  return 0;
+}
+
 function isAuthErrorMessage(msg) {
   const m = String(msg || '');
   return /401|403|rejected the API key|invalid.*key|unauthorized|forbidden|402|payment|credits/i.test(m);
@@ -91,6 +118,7 @@ function normalizeContent(content) {
 }
 
 async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
+  const corrId = newCorrelationId();
   const apiKey = getApiKey();
   if (!apiKey) {
     const e = new Error("OPENROUTER_API_KEY environment variable is not set.");
@@ -160,13 +188,13 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
       const e = new Error(`OpenRouter request timed out after ${REQUEST_TIMEOUT_MS / 1000}s (model ${selectedModel}). Please try again.`);
       e.status = 504;
       if (canRetry) {
-        console.warn(`Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
+        console.warn(`[${corrId}] Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
         return callOpenRouter(prompt, withNextModel(), attempt + 1);
       }
       throw e;
     }
     if (canRetry && !isAuthErrorMessage(err && err.message)) {
-      console.warn(`Network error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModelFor()}...`);
+      console.warn(`[${corrId}] Network error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1);
     }
     throw err;
@@ -174,7 +202,8 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
 
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
-    console.warn(`Model ${selectedModel} returned HTTP ${response.status}: ${errText.slice(0, 200)}`);
+    const retryAfterSecs = parseRetryAfterSecs(response.headers);
+    console.warn(`[${corrId}] Model ${selectedModel} returned HTTP ${response.status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}: ${upstreamPreview(errText)}`);
     if (response.status === 401 || response.status === 403) {
       const e = new Error("OpenRouter rejected the API key (HTTP " + response.status + "). Ask the admin to check OPENROUTER_API_KEY.");
       e.status = 500;
@@ -186,15 +215,32 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
       throw e;
     }
     if (isRetryableStatus(response.status) && canRetry) {
-      console.log(`Retrying with fallback model ${nextModelFor()}...`);
-      // Small bounded backoff for rate limits.
-      if (response.status === 429) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+      console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
+      // Respect legitimate Retry-After when provided, bounded so a single
+      // user request can never stall a serverless function: at most 5s here
+      // (plus the pre-existing linear backoff as the floor for 429s). The
+      // full value is still propagated to the client (e.retryAfter), which
+      // is where the real wait happens — the user retries after that delay.
+      // No tight-loop retries: exactly one attempt per configured model.
+      if (response.status === 429) {
+        const waitSecs = retryAfterSecs > 0 ? Math.min(retryAfterSecs, 5) : (attempt + 1);
+        await new Promise(r => setTimeout(r, waitSecs * 1000));
+      }
       return callOpenRouter(prompt, withNextModel(), attempt + 1);
     }
     const e = new Error(response.status === 429
       ? "OpenRouter rate limit reached (HTTP 429). Wait a minute and try again."
-      : `OpenRouter error (${response.status}): ${errText.slice(0, 300)}`);
+      : `OpenRouter error (${response.status}): ${upstreamPreview(errText).slice(0, 300)}`);
     e.status = response.status === 429 ? 429 : 502;
+    if (response.status === 429) {
+      // Coded so api/ai.js and the client can distinguish provider rate
+      // limits from our own application limiter. `model` is the last model
+      // attempted (all configured fallbacks were exhausted).
+      e.code = 'UPSTREAM_RATE_LIMIT';
+      e.model = selectedModel;
+      e.corrId = corrId;
+      if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
+    }
     throw e;
   }
 
@@ -206,7 +252,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     const err = new Error("OpenRouter returned non-JSON response. Please try again.");
     err.status = 502;
     if (canRetry) {
-      console.warn(`Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
+      console.warn(`[${corrId}] Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1);
     }
     throw err;
@@ -215,7 +261,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
   if (data.error) {
     const msg = String((data.error && data.error.message) || "OpenRouter error");
     if (!isAuthErrorMessage(msg) && canRetry) {
-      console.warn(`Provider error on ${selectedModel}: ${msg}. Retrying with ${nextModelFor()}...`);
+      console.warn(`[${corrId}] Provider error on ${selectedModel}: ${upstreamPreview(msg)}. Retrying with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1);
     }
     const e = new Error(msg.slice(0, 300));
@@ -235,7 +281,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     const e = new Error("The AI model returned an empty response. Please try again.");
     e.status = 502;
     if (canRetry) {
-      console.warn(`Empty content from ${selectedModel}, retrying with ${nextModelFor()}...`);
+      console.warn(`[${corrId}] Empty content from ${selectedModel}, retrying with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1);
     }
     throw e;
@@ -293,4 +339,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };

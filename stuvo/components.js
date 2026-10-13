@@ -948,10 +948,25 @@ async function safeApiCall(endpoint, payload) {
     }
     const errorText = await response.text().catch(() => '');
     let serverMsg = '';
+    let serverCode = '';
+    let serverRetryAfter = 0;
+    let serverModel = '';
     try {
         const parsed = JSON.parse(errorText);
         serverMsg = parsed.error || '';
+        serverCode = parsed.code || '';
+        if (Number(parsed.retryAfter) > 0) serverRetryAfter = Math.min(Math.floor(Number(parsed.retryAfter)), 600);
+        serverModel = parsed.model || '';
     } catch (e) { serverMsg = errorText; }
+    // Honor a Retry-After response header when the JSON body carries none.
+    if (!serverRetryAfter) {
+        try {
+            const hr = response.headers && response.headers.get ? response.headers.get('retry-after') : null;
+            if (hr !== null && hr !== undefined && hr !== '' && Number(hr) > 0) {
+                serverRetryAfter = Math.min(Math.floor(Number(hr)), 600);
+            }
+        } catch (e) {}
+    }
     // Log status + a redacted preview server-side; never log raw secrets.
     console.error('AI service error:', status, sanitizeServerMessage(errorText, 300));
     // NOTE: only classify as a missing-key error when the body is JSON (or
@@ -972,7 +987,19 @@ async function safeApiCall(endpoint, payload) {
         throw new Error(`AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON; HTTP ${status}). The server deployment must route ${endpoint} to the API function before any SPA fallback — redeploy with the api/ functions and OPENROUTER_API_KEY set server-side, then retry.`);
     }
     if (status === 429) {
-        throw new Error(`AI is rate-limited right now (HTTP 429 for ${endpoint}). Wait a minute and try again.`);
+        // Distinguish OUR application limiter from the UPSTREAM provider
+        // limit — they need different user actions. Deliberately no
+        // automatic retry or key fallback here: re-sending would add load
+        // to whichever side is already throttling. The user retries once
+        // after the indicated wait.
+        const waitSecs = serverRetryAfter > 0 ? serverRetryAfter : 60;
+        const isAppLimit = serverCode === 'APP_RATE_LIMIT'
+            || (!serverCode && /too many requests/i.test(serverMsg || '') && !/openrouter|provider/i.test(serverMsg || ''));
+        if (isAppLimit) {
+            throw new Error(`You're sending requests too quickly (application limit, HTTP 429 for ${endpoint}). Please wait about ${waitSecs}s and try again — no need to resend repeatedly.`);
+        }
+        const modelBit = serverModel ? ` (provider limit, model ${sanitizeServerMessage(serverModel, 80)})` : '';
+        throw new Error(`The AI provider is rate-limited right now (HTTP 429 for ${endpoint}${modelBit}). Please wait about ${waitSecs}s and retry once — your message is safe.`);
     }
     const clean = sanitizeServerMessage(serverMsg, 280);
     throw new Error(clean ? `AI service error for ${endpoint} (HTTP ${status}): ${clean}` : `AI service error for ${endpoint} (HTTP ${status}). Please try again.`);

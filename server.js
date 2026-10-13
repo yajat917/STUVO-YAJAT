@@ -30,8 +30,14 @@ function rateLimited(req, res) {
   b.count++;
   if (rateBuckets.size > 5000) rateBuckets.clear(); // avoid unbounded growth
   if (b.count > RATE_MAX_HITS) {
+    // Application-level rate limit (NOT an upstream/OpenRouter limit).
+    // The `code` lets clients distinguish this from provider 429s.
+    // Limit stays per-IP at 60/min: generous for chat, still blocks abuse.
+    // NOTE: this limiter only applies where server.js serves traffic. On
+    // Vercel, api/*.js run as serverless functions and this file is not
+    // executed — a 429 there comes from upstream (see api/_lib/openrouter.js).
     res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
-    res.end(JSON.stringify({ error: 'Too many requests. Please wait a minute and try again.' }));
+    res.end(JSON.stringify({ error: 'Too many requests. Please wait a minute and try again.', code: 'APP_RATE_LIMIT', retryAfter: 60 }));
     return true;
   }
   return false;
