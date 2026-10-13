@@ -117,7 +117,7 @@ function normalizeContent(content) {
   return content;
 }
 
-async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
+async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 = null) {
   const corrId = newCorrelationId();
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -151,10 +151,24 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     messages = [{ role: "user", content: fullPrompt }];
   }
 
-  const canRetry = attempt < MODELS.length - 1;
-  const nextModelFor = () => MODELS[attempt + 1];
+  // Controlled fallback: at most ONE fallback attempt per user request
+  // (primary + one fallback = max 2 upstream calls). This bounds provider
+  // load, keeps a single request inside the serverless time budget, and
+  // guarantees a model that returned 429 is never tried twice below.
+  const MAX_FALLBACKS_PER_REQUEST = 1;
+  const tried429 = Array.isArray(_tried429) ? _tried429 : [];
+  const canRetry = attempt < MAX_FALLBACKS_PER_REQUEST;
+  function pickFallbackModel() {
+    // First configured model that is neither the just-failed model nor one
+    // already rate-limited for this request. Returns null when every
+    // configured model is exhausted (caller then returns a retry-later
+    // JSON error instead of looping).
+    const seen = new Set([...tried429, selectedModel]);
+    return MODELS.find(m => !seen.has(m)) || null;
+  }
+  const nextModelFor = () => pickFallbackModel() || MODELS[attempt + 1];
   const withNextModel = () => {
-    const nm = nextModelFor();
+    const nm = pickFallbackModel() || MODELS[attempt + 1] || selectedModel;
     return typeof model === 'object' && model !== null ? { ...model, model: nm } : nm;
   };
 
@@ -189,13 +203,13 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
       e.status = 504;
       if (canRetry) {
         console.warn(`[${corrId}] Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
-        return callOpenRouter(prompt, withNextModel(), attempt + 1);
+        return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
       }
       throw e;
     }
     if (canRetry && !isAuthErrorMessage(err && err.message)) {
       console.warn(`[${corrId}] Network error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
     }
     throw err;
   }
@@ -215,18 +229,33 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
       throw e;
     }
     if (isRetryableStatus(response.status) && canRetry) {
-      console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
-      // Respect legitimate Retry-After when provided, bounded so a single
-      // user request can never stall a serverless function: at most 5s here
-      // (plus the pre-existing linear backoff as the floor for 429s). The
-      // full value is still propagated to the client (e.retryAfter), which
-      // is where the real wait happens — the user retries after that delay.
-      // No tight-loop retries: exactly one attempt per configured model.
       if (response.status === 429) {
+        const tried = [...tried429, selectedModel];
+        const fb = pickFallbackModel();
+        if (!fb) {
+          // Every configured model already returned 429 for this request —
+          // stop here and tell the user to retry later (never loop).
+          const e = new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
+          e.status = 429;
+          e.code = 'UPSTREAM_RATE_LIMIT';
+          e.model = selectedModel;
+          e.corrId = corrId;
+          e.triedModels = tried;
+          if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
+          throw e;
+        }
+        console.log(`[${corrId}] 429 on ${selectedModel}; single fallback to ${fb}...`);
+        // Respect legitimate Retry-After when provided, bounded so a single
+        // user request can never stall a serverless function: at most 5s here.
+        // The full value is still propagated to the client (e.retryAfter),
+        // which is where the real wait happens — the user retries after that
+        // delay. No tight-loop retries: one fallback attempt per request max.
         const waitSecs = retryAfterSecs > 0 ? Math.min(retryAfterSecs, 5) : (attempt + 1);
         await new Promise(r => setTimeout(r, waitSecs * 1000));
+        return callOpenRouter(prompt, withNextModel(), attempt + 1, tried);
       }
-      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+      console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
     }
     const e = new Error(response.status === 429
       ? "OpenRouter rate limit reached (HTTP 429). Wait a minute and try again."
@@ -235,10 +264,11 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     if (response.status === 429) {
       // Coded so api/ai.js and the client can distinguish provider rate
       // limits from our own application limiter. `model` is the last model
-      // attempted (all configured fallbacks were exhausted).
+      // attempted; `triedModels` lists every model rate-limited this request.
       e.code = 'UPSTREAM_RATE_LIMIT';
       e.model = selectedModel;
       e.corrId = corrId;
+      e.triedModels = [...tried429, selectedModel];
       if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
     }
     throw e;
@@ -253,7 +283,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     err.status = 502;
     if (canRetry) {
       console.warn(`[${corrId}] Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
     }
     throw err;
   }
@@ -262,7 +292,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     const msg = String((data.error && data.error.message) || "OpenRouter error");
     if (!isAuthErrorMessage(msg) && canRetry) {
       console.warn(`[${corrId}] Provider error on ${selectedModel}: ${upstreamPreview(msg)}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
     }
     const e = new Error(msg.slice(0, 300));
     e.status = 502;
@@ -272,7 +302,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
   if (!data.choices || !data.choices[0] || !data.choices[0].message) {
     const e = new Error("Unexpected OpenRouter response structure (missing choices). Please try again.");
     e.status = 502;
-    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1);
+    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
     throw e;
   }
 
@@ -282,7 +312,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0) {
     e.status = 502;
     if (canRetry) {
       console.warn(`[${corrId}] Empty content from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
     }
     throw e;
   }

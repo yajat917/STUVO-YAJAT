@@ -440,6 +440,7 @@ module.exports = async (req, res) => {
     if (e.retryAfter) payload.retryAfter = e.retryAfter;
     if (e.model) payload.model = e.model;
     if (e.corrId) payload.corrId = e.corrId;
+    if (Array.isArray(e.triedModels) && e.triedModels.length) payload.triedModels = e.triedModels.slice(0, 5);
     console.error(`Error in action "${action}":`, message,
       e.code ? `(code=${e.code}${e.model ? `, model=${e.model}` : ''}${e.corrId ? `, corrId=${e.corrId}` : ''})` : '');
     res.status(status).json(payload);

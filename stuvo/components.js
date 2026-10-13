@@ -842,7 +842,10 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
             if (response.status === 401 || response.status === 403) {
                 throw new Error("OpenRouter rejected the API key (HTTP " + response.status + "). Check Settings → AI Key and save a valid sk-or-v1-... key.");
             }
-            if ((response.status === 429 || (response.status >= 500 && response.status <= 599)) && attempt < MODELS.length - 1) {
+            // Controlled fallback: at most ONE fallback attempt per request
+            // (primary + one fallback). A 429'd model is never retried —
+            // attempt 1 already uses MODELS[1], so no same-model repeat.
+            if ((response.status === 429 || (response.status >= 500 && response.status <= 599)) && attempt < 1) {
                 if (response.status === 429) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
                 return callDirectOpenRouterFromAPI(prompt, apiKey, attempt + 1);
             }
@@ -866,9 +869,10 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
         if (err && err.name === 'AbortError') throw new Error("AI request timed out after 20s. Please try again.");
         // Retry across fallback models for transient/network errors only —
         // never retry auth errors (they will fail identically on every model).
+        // Max one fallback attempt per request (see above).
         const msg = String((err && err.message) || '');
         const isAuth = msg.includes('rejected the API key') || msg.includes('(HTTP 401') || msg.includes('(HTTP 403');
-        if (!isAuth && attempt < MODELS.length - 1) {
+        if (!isAuth && attempt < 1) {
             await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
             return callDirectOpenRouterFromAPI(prompt, apiKey, attempt + 1);
         }
