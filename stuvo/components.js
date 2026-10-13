@@ -902,8 +902,17 @@ async function safeApiCall(endpoint, payload) {
             data = JSON.parse(raw);
         } catch (e) {
             const looksHtml = /^\s*</.test(raw) || /text\/html/i.test(ct);
+            // The backend route is absent on this host (static/SPA fallback
+            // serves HTML for /api/*). If the user saved a personal key,
+            // serve the request directly — same schemas, strictly validated.
+            // Otherwise fail visibly (never return {} — that surfaces as
+            // misleading downstream errors like "No question returned").
+            if (hasUserApiKey()) {
+                console.warn(`Endpoint ${endpoint} returned ${looksHtml ? 'HTML instead of JSON' : 'non-JSON'}; using per-user key fallback...`);
+                return await handleClientFallback(endpoint, payload);
+            }
             throw new Error(looksHtml
-                ? `AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON). Check deployment API routes, then retry.`
+                ? `AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON). Check deployment API routes, then retry. ` + aiSetupHint()
                 : `AI endpoint ${endpoint} returned a non-JSON response. Please try again.`);
         }
         if (data && typeof data === 'object' && data.error) throw new Error(data.error);
