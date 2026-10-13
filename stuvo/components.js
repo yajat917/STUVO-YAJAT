@@ -304,6 +304,19 @@ function timeAgoShared(ts) {
 var _notificationUnsub = null;
 var _notificationCache = [];
 var _notificationBellBound = false;
+var _notificationUid = null;
+var _notificationPoll = null;
+const NOTIFICATION_POLL_MS = 60000;
+
+// Stop the realtime listener + polling fallback (e.g. on sign-out, so a
+// revoked-credential listen doesn't retry the Firestore channel in a loop
+// and spam `channel ... 400` console errors on shared devices).
+function teardownNotifications() {
+    _notificationUid = null;
+    if (_notificationPoll) { try { clearInterval(_notificationPoll); } catch (_) {} _notificationPoll = null; }
+    if (_notificationUnsub) { try { _notificationUnsub(); } catch (_) {} _notificationUnsub = null; }
+}
+if (typeof window !== 'undefined') window.teardownNotifications = teardownNotifications;
 
 function getNotificationMeta(type) {
     switch (type) {
@@ -572,9 +585,15 @@ function renderNotificationBell(uid) {
     });
 
     // Optional live updates via onSnapshot if available
+    // The error callback is required: without it a rejected listen (revoked
+    // auth after sign-out, offline, rules deny) retries the Firestore Listen
+    // channel indefinitely, logging `channel ... 400` on every attempt.
     try {
         if (typeof onSnapshot === 'function') {
-            if (_notificationUnsub) { try { _notificationUnsub(); } catch(_){} }
+            if (_notificationUid && _notificationUid !== uid) teardownNotifications();
+            _notificationUid = uid;
+            if (_notificationUnsub) { try { _notificationUnsub(); } catch(_){} _notificationUnsub = null; }
+            if (_notificationPoll) { try { clearInterval(_notificationPoll); } catch(_){} _notificationPoll = null; }
             const colRef = collection(db, 'users', uid, 'notifications');
             const q = query(colRef, orderBy('createdAt', 'desc'));
             _notificationUnsub = onSnapshot(q, snap => {
@@ -587,6 +606,26 @@ function renderNotificationBell(uid) {
                 });
                 _notificationCache = list;
                 renderNotificationList(uid, list);
+            }, err => {
+                // Log code only — never tokens, keys, or user data.
+                const code = err && err.code ? String(err.code) : 'unknown';
+                console.warn('[notification listen] stopped (' + code + '); using periodic refresh.');
+                if (_notificationUnsub) { try { _notificationUnsub(); } catch(_){} _notificationUnsub = null; }
+                if (code === 'permission-denied' || code === 'unauthenticated') {
+                    // Likely signed out — stop entirely; bell remounts on next login.
+                    teardownNotifications();
+                    return;
+                }
+                // Transient failure: poll quietly instead of hammering the channel.
+                if (!_notificationPoll && _notificationUid === uid) {
+                    _notificationPoll = setInterval(() => {
+                        if (_notificationUid !== uid) { try { clearInterval(_notificationPoll); } catch(_){} _notificationPoll = null; return; }
+                        fetchNotifications(uid).then(list => {
+                            _notificationCache = list;
+                            renderNotificationList(uid, list);
+                        });
+                    }, NOTIFICATION_POLL_MS);
+                }
             });
         }
     } catch (e) { console.warn('[notification onSnapshot]', e); }

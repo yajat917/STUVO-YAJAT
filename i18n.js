@@ -63,6 +63,10 @@ function cacheLangLocally(code) {
 function clearScopedLangCache() {
   try { const sk = stuvoLangScopedKey(); if (sk) localStorage.removeItem(sk); } catch {}
   try { localStorage.removeItem('stuvo_accessibility_cache'); } catch {}
+  // Also stop the notifications realtime listener: after sign-out its revoked
+  // credentials would otherwise retry the Firestore Listen channel in a loop
+  // (`channel ... 400` console errors), a real problem on shared devices.
+  try { if (typeof window !== 'undefined' && typeof window.teardownNotifications === 'function') window.teardownNotifications(); } catch {}
 }
 
 // BCP-47 locale tag for a Stuvo language code — used by SpeechRecognition / speechSynthesis.
@@ -386,7 +390,9 @@ function translateDOM(root){
   const attrNames = ['placeholder','title','aria-label','aria-description','alt'];
   const attrElements = root.querySelectorAll ? root.querySelectorAll('*') : [];
   for(const el of attrElements){
+    try {
     for(const attr of attrNames){
+      try {
       const val = el.getAttribute(attr);
       if(val && val.trim()){
         // Store original in dataset
@@ -403,7 +409,9 @@ function translateDOM(root){
           el.setAttribute(attr, translatedAttr);
         }
       }
+      } catch (attrErr) { console.warn('[translateDOM attr]', attrErr && attrErr.message); }
     }
+    } catch (elErr) { console.warn('[translateDOM el]', elErr && elErr.message); }
   }
 }
 

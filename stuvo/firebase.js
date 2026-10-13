@@ -45,7 +45,7 @@ try {
     orderBy = (fieldPath, direction) => (q) => q.orderBy(fieldPath, direction);
     limit = (n) => (q) => q.limit(n);
     Timestamp = firebase.firestore.Timestamp;
-    onSnapshot = (ref, callback) => ref.onSnapshot(callback);
+    onSnapshot = (ref, ...rest) => ref.onSnapshot(...rest);
 } catch (e) {
     console.warn("Firebase config is mock/invalid. App will not function correctly without real config.");
 }
