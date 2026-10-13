@@ -117,7 +117,7 @@ function normalizeContent(content) {
   return content;
 }
 
-async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 = null) {
+async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedModels = null) {
   const corrId = newCorrelationId();
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -154,16 +154,17 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
   // Controlled fallback: at most ONE fallback attempt per user request
   // (primary + one fallback = max 2 upstream calls). This bounds provider
   // load, keeps a single request inside the serverless time budget, and
-  // guarantees a model that returned 429 is never tried twice below.
+  // guarantees a model that already failed for this request is never tried
+  // twice below.
   const MAX_FALLBACKS_PER_REQUEST = 1;
-  const tried429 = Array.isArray(_tried429) ? _tried429 : [];
+  const triedModels = Array.isArray(_triedModels) ? _triedModels : [];
   const canRetry = attempt < MAX_FALLBACKS_PER_REQUEST;
   function pickFallbackModel() {
     // First configured model that is neither the just-failed model nor one
-    // already rate-limited for this request. Returns null when every
-    // configured model is exhausted (caller then returns a retry-later
-    // JSON error instead of looping).
-    const seen = new Set([...tried429, selectedModel]);
+    // already tried for this request. Returns null when every configured
+    // model is exhausted (caller then returns a retry-later JSON error
+    // instead of looping).
+    const seen = new Set([...triedModels, selectedModel]);
     return MODELS.find(m => !seen.has(m)) || null;
   }
   const nextModelFor = () => pickFallbackModel() || MODELS[attempt + 1];
@@ -203,13 +204,13 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
       e.status = 504;
       if (canRetry) {
         console.warn(`[${corrId}] Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
-        return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
+        return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
       }
       throw e;
     }
     if (canRetry && !isAuthErrorMessage(err && err.message)) {
       console.warn(`[${corrId}] Network error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
     }
     throw err;
   }
@@ -230,10 +231,10 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
     }
     if (isRetryableStatus(response.status) && canRetry) {
       if (response.status === 429) {
-        const tried = [...tried429, selectedModel];
+        const tried = [...triedModels, selectedModel];
         const fb = pickFallbackModel();
         if (!fb) {
-          // Every configured model already returned 429 for this request —
+          // Every configured model already failed for this request —
           // stop here and tell the user to retry later (never loop).
           const e = new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
           e.status = 429;
@@ -255,7 +256,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
         return callOpenRouter(prompt, withNextModel(), attempt + 1, tried);
       }
       console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
     }
     const e = new Error(response.status === 429
       ? "OpenRouter rate limit reached (HTTP 429). Wait a minute and try again."
@@ -264,11 +265,11 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
     if (response.status === 429) {
       // Coded so api/ai.js and the client can distinguish provider rate
       // limits from our own application limiter. `model` is the last model
-      // attempted; `triedModels` lists every model rate-limited this request.
+      // attempted; `triedModels` lists every model attempted this request.
       e.code = 'UPSTREAM_RATE_LIMIT';
       e.model = selectedModel;
       e.corrId = corrId;
-      e.triedModels = [...tried429, selectedModel];
+      e.triedModels = [...triedModels, selectedModel];
       if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
     }
     throw e;
@@ -283,7 +284,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
     err.status = 502;
     if (canRetry) {
       console.warn(`[${corrId}] Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
     }
     throw err;
   }
@@ -292,7 +293,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
     const msg = String((data.error && data.error.message) || "OpenRouter error");
     if (!isAuthErrorMessage(msg) && canRetry) {
       console.warn(`[${corrId}] Provider error on ${selectedModel}: ${upstreamPreview(msg)}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
     }
     const e = new Error(msg.slice(0, 300));
     e.status = 502;
@@ -300,24 +301,125 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _tried429 
   }
 
   if (!data.choices || !data.choices[0] || !data.choices[0].message) {
-    const e = new Error("Unexpected OpenRouter response structure (missing choices). Please try again.");
+    const e = new Error("OpenRouter returned an incomplete response structure (missing choices). Please try again.");
     e.status = 502;
-    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
-    throw e;
-  }
-
-  const content = normalizeContent(data.choices[0].message.content);
-  if (content === null || content === undefined || String(content).trim().length === 0) {
-    const e = new Error("The AI model returned an empty response. Please try again.");
-    e.status = 502;
+    e.code = 'UPSTREAM_MALFORMED';
     if (canRetry) {
-      console.warn(`[${corrId}] Empty content from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...tried429]);
+      console.warn(`[${corrId}] Missing choices/message from ${selectedModel}, retrying with ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
     }
     throw e;
   }
 
+  // Classify the actual shape before extracting — models do not all return
+  // identical structures (string vs multipart array vs null vs refusal).
+  const meta = describeUpstreamResult(data);
+  if (!meta.hasMessage) {
+    // describeUpstreamResult disagrees with the guard above only for exotic
+    // shapes (e.g. message is a string, not an object) — still malformed.
+    const e = new Error("OpenRouter returned an incomplete response structure (missing choices). Please try again.");
+    e.status = 502;
+    e.code = 'UPSTREAM_MALFORMED';
+    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels]);
+    throw e;
+  }
+  console.log(`[${corrId}] ${selectedModel} HTTP 200 ${metaLog(meta)}`);
+
+  if (meta.hasRefusal || REFUSAL_FINISH_REASONS.includes(meta.finishReason || '')) {
+    // A refusal or safety-filter stop is decisive: trying another model to
+    // get around it would be wrong, so there is NO fallback here. Never
+    // invent substitute content either — fail visibly with a clear message.
+    const e = new Error("The model declined to respond to that request. Please try rephrasing your prompt.");
+    e.status = 502;
+    e.code = 'UPSTREAM_REFUSAL';
+    e.model = selectedModel;
+    e.corrId = corrId;
+    throw e;
+  }
+
+  const rawContent = data.choices[0].message.content;
+  if (rawContent === null || typeof rawContent === 'undefined') {
+    // Distinct from empty-string: the provider sent an explicit null, which
+    // usually means the generation produced nothing at all (capacity hiccup
+    // on free-tier models). One controlled fallback, then an honest error.
+    const e = new Error("The AI model returned no content. Please try again.");
+    e.status = 502;
+    e.code = 'UPSTREAM_NULL_CONTENT';
+    e.model = selectedModel;
+    e.corrId = corrId;
+    if (canRetry) {
+      console.warn(`[${corrId}] Null content from ${selectedModel}, retrying once with ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+    }
+    throw e;
+  }
+
+  // Documented schema: content is a string or an array of content parts
+  // ([{type:'text', text:'...'}]); normalizeContent extracts text parts only.
+  const content = normalizeContent(rawContent);
+  if (typeof content !== 'string' || String(content).trim().length === 0) {
+    const e = new Error(
+      typeof content !== 'string'
+        ? "OpenRouter returned content in an unexpected format. Please try again."
+        : "The AI model returned an empty response. Please try again."
+    );
+    e.status = 502;
+    e.code = typeof content !== 'string' ? 'UPSTREAM_MALFORMED' : 'UPSTREAM_EMPTY';
+    e.model = selectedModel;
+    e.corrId = corrId;
+    if (canRetry) {
+      console.warn(`[${corrId}] ${metaLog(meta)} from ${selectedModel}, retrying once with ${nextModelFor()}...`);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+    }
+    throw e;
+  }
+
+  if (meta.truncated) {
+    // finish_reason=length with usable partial text: return what the model
+    // produced (callers that need strict JSON still validate and fail
+    // loudly via their own schema checks) and log it for diagnosis.
+    console.warn(`[${corrId}] Truncated response (finish_reason=length) from ${selectedModel}; returning partial output.`);
+  }
+
   return content;
+}
+
+// ─── Upstream result classification ─────────────────────────────
+// Inspects the ACTUAL provider response shape before extracting text, so
+// each failure mode (missing choices, refusal/filter, null content, empty
+// text, malformed body) gets a distinct, accurately-coded error instead of
+// one generic 502. Captures metadata only — never prompts, keys, or bodies.
+const REFUSAL_FINISH_REASONS = ['content_filter'];
+function describeUpstreamResult(data) {
+  const meta = {
+    hasChoices: !!(data && Array.isArray(data.choices)),
+    choicesLen: data && Array.isArray(data.choices) ? data.choices.length : 0,
+    hasMessage: !!(data && data.choices && data.choices[0] && data.choices[0].message && typeof data.choices[0].message === 'object'),
+    contentType: 'missing', contentLen: 0,
+    finishReason: null, hasRefusal: false, truncated: false,
+  };
+  try {
+    const choice = data && data.choices && data.choices[0];
+    if (choice && choice.finish_reason !== undefined && choice.finish_reason !== null) {
+      meta.finishReason = String(choice.finish_reason);
+    }
+    const msg = choice && choice.message;
+    if (msg && typeof msg === 'object') {
+      if (typeof msg.refusal === 'string' && msg.refusal.trim()) meta.hasRefusal = true;
+      const c = msg.content;
+      if (typeof c === 'string') { meta.contentType = 'string'; meta.contentLen = c.length; }
+      else if (Array.isArray(c)) { meta.contentType = 'array'; meta.contentLen = c.length; }
+      else if (c === null) meta.contentType = 'null';
+      else if (typeof c === 'undefined') meta.contentType = 'missing';
+      else meta.contentType = typeof c;
+    }
+    meta.truncated = meta.finishReason === 'length';
+  } catch (e) {}
+  return meta;
+}
+function metaLog(meta) {
+  const size = (meta.contentType === 'string' || meta.contentType === 'array') ? `(${meta.contentLen})` : '';
+  return `choices=${meta.hasChoices ? meta.choicesLen : 'none'} message=${meta.hasMessage ? 'yes' : 'no'} content=${meta.contentType}${size} finish=${meta.finishReason || 'none'} refusal=${meta.hasRefusal ? 'yes' : 'no'}${meta.truncated ? ' TRUNCATED' : ''}`;
 }
 
 function parseJSON(text) {
@@ -369,4 +471,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };
