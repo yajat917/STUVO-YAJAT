@@ -878,6 +878,20 @@ async function callDirectOpenRouterFromAPI(prompt, apiKey, attempt = 0) {
     }
 }
 
+function sanitizeServerMessage(msg, maxLen) {
+    // Defense-in-depth: backend errors never contain keys, but redact anything
+    // key-like before it can reach a toast/bubble. Never log or display raw
+    // secrets, env values, or long upstream payloads.
+    let s = (msg === null || msg === undefined) ? '' : String(msg);
+    s = s.replace(/sk-or-[A-Za-z0-9\-_]+/g, '[redacted-key]');
+    s = s.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]');
+    s = s.replace(/(api[_-]?key\s*[:=]\s*)(['"]?)[^\s'";,}]+(['"]?)/gi, '$1[redacted]');
+    s = s.replace(/([A-Za-z0-9\-_]{32,})/g, (m) => (/sk-or/i.test(m) ? '[redacted-key]' : m));
+    const cap = maxLen || 280;
+    if (s.length > cap) s = s.slice(0, cap);
+    return s.trim();
+}
+
 async function safeApiCall(endpoint, payload) {
     let response;
     try {
@@ -891,36 +905,45 @@ async function safeApiCall(endpoint, payload) {
         console.warn(`Fallback triggered for ${endpoint} due to network error:`, err && err.message);
         return await handleClientFallback(endpoint, payload);
     }
+    const status = response.status;
+    const ct = (response.headers && response.headers.get) ? (response.headers.get('content-type') || '') : '';
     if (response.ok) {
         // Read as text first: some hosts return the SPA fallback (HTML) with
         // HTTP 200 for unknown /api/* routes. Returning {} for that would
         // surface downstream as misleading errors like "No question returned".
         const raw = await response.text().catch(() => '');
-        const ct = (response.headers && response.headers.get) ? (response.headers.get('content-type') || '') : '';
+        if (!raw || !raw.trim()) {
+            if (hasUserApiKey()) {
+                console.warn(`Endpoint ${endpoint} returned HTTP ${status} with an empty body; using per-user key fallback...`);
+                return await handleClientFallback(endpoint, payload);
+            }
+            throw new Error(`AI endpoint ${endpoint} returned an empty response (HTTP ${status}, content-type: ${ct || 'unknown'}). Please try again.`);
+        }
         let data;
         try {
             data = JSON.parse(raw);
         } catch (e) {
-            const looksHtml = /^\s*</.test(raw) || /text\/html/i.test(ct);
+            const looksHtml = /text\/html/i.test(ct) || /^\s*</.test(raw);
             // The backend route is absent on this host (static/SPA fallback
-            // serves HTML for /api/*). If the user saved a personal key,
-            // serve the request directly — same schemas, strictly validated.
-            // Otherwise fail visibly (never return {} — that surfaces as
-            // misleading downstream errors like "No question returned").
+            // serves HTML for /api/*). This is a ROUTING problem, not a missing
+            // OpenRouter key — never misdiagnose it as one. If the user saved a
+            // personal key, serve the request directly — same schemas, strictly
+            // validated. Otherwise fail visibly (never return {} — that surfaces
+            // as misleading downstream errors like "No question returned").
             if (hasUserApiKey()) {
-                console.warn(`Endpoint ${endpoint} returned ${looksHtml ? 'HTML instead of JSON' : 'non-JSON'}; using per-user key fallback...`);
+                console.warn(`Endpoint ${endpoint} returned ${looksHtml ? 'HTML instead of JSON' : 'non-JSON'} (HTTP ${status}); using per-user key fallback...`);
                 return await handleClientFallback(endpoint, payload);
             }
             throw new Error(looksHtml
-                ? `AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON). Check deployment API routes, then retry. ` + aiSetupHint()
-                : `AI endpoint ${endpoint} returned a non-JSON response. Please try again.`);
+                ? `AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON; HTTP ${status}). The server deployment must route ${endpoint} to the API function before any SPA fallback — redeploy with the api/ functions and OPENROUTER_API_KEY set server-side, then retry. A personal browser key is only an optional fallback, not a substitute for the server route.`
+                : `AI endpoint ${endpoint} returned a non-JSON response (HTTP ${status}, content-type: ${sanitizeServerMessage(ct || 'unknown', 80)}). Please try again.`);
         }
-        if (data && typeof data === 'object' && data.error) throw new Error(data.error);
+        if (data && typeof data === 'object' && data.error) throw new Error(sanitizeServerMessage(data.error, 280));
         return data;
     }
     // If static web server returns 405 Method Not Allowed or 404 Not Found, use client-side direct fallback
-    if (response.status === 405 || response.status === 404) {
-        console.warn(`Endpoint ${endpoint} returned HTTP ${response.status}. Using direct AI fallback...`);
+    if (status === 405 || status === 404) {
+        console.warn(`Endpoint ${endpoint} returned HTTP ${status}. Using direct AI fallback...`);
         return await handleClientFallback(endpoint, payload);
     }
     const errorText = await response.text().catch(() => '');
@@ -929,8 +952,14 @@ async function safeApiCall(endpoint, payload) {
         const parsed = JSON.parse(errorText);
         serverMsg = parsed.error || '';
     } catch (e) { serverMsg = errorText; }
-    console.error('AI service error:', response.status, errorText);
-    const missingServerKey = /OPENROUTER_API_KEY|environment variable is not set|No OpenRouter key/i.test(serverMsg || '');
+    // Log status + a redacted preview server-side; never log raw secrets.
+    console.error('AI service error:', status, sanitizeServerMessage(errorText, 300));
+    // NOTE: only classify as a missing-key error when the body is JSON (or
+    // plain text) from the API itself — never when it is HTML from an SPA
+    // fallback. HTML routing failures are handled above and must not be
+    // misdiagnosed as a missing OPENROUTER_API_KEY.
+    const isHtmlError = /text\/html/i.test(ct) || /^\s*</.test(errorText || '');
+    const missingServerKey = !isHtmlError && /OPENROUTER_API_KEY|environment variable is not set|No OpenRouter key/i.test(serverMsg || '');
     if (missingServerKey && hasUserApiKey()) {
         // Server env missing but user provided their own key — serve via direct fallback.
         console.warn(`Server key missing for ${endpoint}; using per-user key fallback...`);
@@ -939,10 +968,14 @@ async function safeApiCall(endpoint, payload) {
     if (missingServerKey) {
         throw new Error('AI server has no API key configured. ' + aiSetupHint());
     }
-    if (response.status === 429) {
-        throw new Error('AI is rate-limited right now. Wait a minute and try again.');
+    if (isHtmlError) {
+        throw new Error(`AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON; HTTP ${status}). The server deployment must route ${endpoint} to the API function before any SPA fallback — redeploy with the api/ functions and OPENROUTER_API_KEY set server-side, then retry.`);
     }
-    throw new Error(serverMsg ? `AI service error: ${String(serverMsg).slice(0, 280)}` : `AI service error (${response.status}). Please try again.`);
+    if (status === 429) {
+        throw new Error(`AI is rate-limited right now (HTTP 429 for ${endpoint}). Wait a minute and try again.`);
+    }
+    const clean = sanitizeServerMessage(serverMsg, 280);
+    throw new Error(clean ? `AI service error for ${endpoint} (HTTP ${status}): ${clean}` : `AI service error for ${endpoint} (HTTP ${status}). Please try again.`);
 }
 
 async function handleClientFallback(endpoint, payload = {}) {
