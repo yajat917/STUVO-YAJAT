@@ -1,13 +1,40 @@
-// Quota-free error-mapping tests (checklist item 8).
+// Quota-free error-mapping tests (checklist item 8 / item 2).
 // Stubs global.fetch so NO real OpenRouter request is ever sent (0 quota).
 // Covers: 429 with/without Retry-After, daily-cap 429 message, 401, 402,
 // 404 model, 500, empty content, invalid JSON, null content, timeout,
 // not_configured, wellbeing escalation-on-failure, and the api/ai.js error
 // contract { ok:false, code, message, retryAfterSec? } + HTTP status.
+// Client-message cases load the REAL aiErrorTextFor/isConnectivityError
+// source from stuvo/components.js (brace-matched extraction, stubbed t()).
 process.env.OPENROUTER_API_KEY = 'sk-or-v1-test-stub-key';
 const assert = require('assert');
+const fs = require('fs');
 const or = require('../api/_lib/openrouter');
 const aiHandler = require('../api/ai');
+
+function extractFn(src, name) {
+  const start = src.indexOf('function ' + name + '(');
+  assert(start !== -1, 'function ' + name + ' found in components.js');
+  let i = src.indexOf('{', start);
+  let depth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === '{') depth++;
+    else if (src[i] === '}') { depth--; if (depth === 0) { i++; break; } }
+  }
+  return src.slice(start, i);
+}
+const compSrc = fs.readFileSync(__dirname + '/../stuvo/components.js', 'utf8');
+global.__translations = {};
+const stubT = (k, d, p) => {
+  if (Object.prototype.hasOwnProperty.call(global.__translations, k)) {
+    let s = global.__translations[k];
+    if (p && typeof p === 'object') Object.keys(p).forEach(key => { s = String(s).replace('{' + key + '}', String(p[key])); });
+    return s;
+  }
+  return typeof d === 'string' ? d : k;
+};
+const aiErrorTextFor = new Function('t', 'aiSetupHint', extractFn(compSrc, 'aiErrorTextFor') + '; return aiErrorTextFor;')(stubT, () => '[setup-hint]');
+const isConnectivityError = new Function('navigator', extractFn(compSrc, 'isConnectivityError') + '; return isConnectivityError;')({ onLine: true });
 
 let stubQueue = [];
 const seenRequests = [];
@@ -236,6 +263,64 @@ async function expectCall(name, stubs, fn, check) {
     delete process.env.OPENROUTER_MODEL;
     passed++;
     console.log('ok - OPENROUTER_MODEL override honored; bogus id → model_unavailable');
+  }
+
+  // 18. Client: 429 with Retry-After 30 → message names ~30 seconds, no "minute"
+  {
+    const msg = aiErrorTextFor('rate_limited', '', 30);
+    assert(/about 30 seconds/.test(msg), 'mentions about 30 seconds, got: ' + msg);
+    assert(!/minute/i.test(msg), 'no invented minute, got: ' + msg);
+    passed++;
+    console.log('ok - client rate_limited + Retry-After 30 → "about 30 seconds"');
+  }
+
+  // 19. Client: generic 429 (no wait) → rate_limited message, no invented wait
+  {
+    const msg = aiErrorTextFor('rate_limited', '', 0);
+    assert(!/minute/i.test(msg) && !/\d+\s*s(ec)?/i.test(msg), 'no invented wait, got: ' + msg);
+    assert(/try again later/i.test(msg), 'got: ' + msg);
+    passed++;
+    console.log('ok - client generic 429 → rate_limited, no invented wait');
+  }
+
+  // 20. Client: daily_limit → daily text (never a minute-wait)
+  {
+    const msg = aiErrorTextFor('daily_limit', '', 0);
+    assert(/daily limit/i.test(msg) && /resets daily/i.test(msg), 'got: ' + msg);
+    passed++;
+    console.log('ok - client daily_limit → daily-cap message');
+  }
+
+  // 21. Client: structured server errors are NEVER connectivity errors
+  {
+    for (const code of ['daily_limit', 'rate_limited', 'model_unavailable', 'account_issue', 'bad_response', 'timeout', 'not_configured', 'upstream_error']) {
+      const err = new Error(code + ' happened'); err.code = code;
+      assert.strictEqual(isConnectivityError(err), false, code + ' must not be connectivity');
+    }
+    passed++;
+    console.log('ok - no contract code is ever classified as connectivity');
+  }
+
+  // 22. Client: genuine fetch failure IS connectivity; offline navigator IS too
+  {
+    assert.strictEqual(isConnectivityError(new Error('Failed to fetch')), true);
+    assert.strictEqual(isConnectivityError(new Error('Load failed')), true);
+    const offlineCheck = new Function('navigator', extractFn(compSrc, 'isConnectivityError') + '; return isConnectivityError;')({ onLine: false });
+    assert.strictEqual(offlineCheck(new Error('anything')), true);
+    // Non-network plain error (e.g. missing-key fallback) is NOT connectivity
+    assert.strictEqual(isConnectivityError(new Error('AI service unavailable: no API key found.')), false);
+    passed++;
+    console.log('ok - connectivity detected only for real fetch/offline failures');
+  }
+
+  // 23. Client: t() passthrough — translated strings win when present
+  {
+    global.__translations['ai.err_rate_limited_wait'] = 'KI busy. {n} sek me dobara.';
+    const msg = aiErrorTextFor('rate_limited', '', 30);
+    assert(/30/.test(msg) && /KI busy/.test(msg), 'got: ' + msg);
+    delete global.__translations['ai.err_rate_limited_wait'];
+    passed++;
+    console.log('ok - client messages render through t() with interpolation');
   }
 
   console.log(`\nAll ${passed} stubbed error-mapping cases passed. Real completion requests used: 0.`);

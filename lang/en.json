@@ -382,7 +382,12 @@
     "supportTitle": "Support",
     "timeLeft": "left",
     "resetDone2": "Done",
-    "focusTimeLine": "{count}m focus time"
+    "focusTimeLine": "{count}m focus time",
+    "aiUnreachable": "Couldn't reach the assistant. Please check your connection and try again.",
+    "aiFailed": "The assistant could not reply.",
+    "historySafe": "Your chat history is safe.",
+    "supportLine": "If you need support right now, please reach out to a trusted adult or counselor.",
+    "addKeyHint": "Tap the AI key button in the top bar to add your free OpenRouter key, or ask your admin to set the server key — then send your message again."
   },
   "accessibility": {
     "title": "Accessibility",
@@ -962,13 +967,14 @@
   "ai": {
     "wellbeingSystemPrompt": "You are the Stuvo Wellbeing Assistant, a supportive listening tool for school students.",
     "err_daily_limit": "The AI's free daily limit has been reached. It resets daily — please try again later.",
-    "err_rate_limited": "The AI is busy. Try again in a minute.",
+    "err_rate_limited": "The AI is busy. Please try again later.",
     "err_model_unavailable": "The configured AI model is currently unavailable. Please try again in a bit.",
     "err_account_issue": "The AI service has an account issue. Please tell your admin.",
     "err_bad_response": "The AI returned an unexpected format. Please try again.",
     "err_timeout": "The AI request timed out. Please try again.",
     "err_not_configured": "The AI server is not configured yet. Please tell your admin.",
-    "err_upstream": "The AI service had a problem. Please try again."
+    "err_upstream": "The AI service had a problem. Please try again.",
+    "err_rate_limited_wait": "The AI is busy. Try again in about {n} seconds."
   },
   "language": {
     "choose": "Choose your language",

@@ -211,7 +211,7 @@ function classifyUpstreamFailure(status, errText) {
     if (isDailyCapMessage(errText, info)) {
       return { code: 'daily_limit', httpStatus: 429, message: "The AI's free daily limit has been reached. It resets daily — please try again later." };
     }
-    return { code: 'rate_limited', httpStatus: 429, message: 'The AI is busy. Try again in a minute.' };
+    return { code: 'rate_limited', httpStatus: 429, message: 'The AI is busy. Please try again later.' };
   }
   if (isModelNotFoundMessage(errText, info, status)) {
     if (isDataPolicyMessage(errText, info)) {
@@ -454,7 +454,7 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
       const bodyText = JSON.stringify(data.error);
       const cls = isDailyCapMessage(bodyText, bodyInfo)
         ? { code: 'daily_limit', httpStatus: 429, message: "The AI's free daily limit has been reached. It resets daily — please try again later." }
-        : { code: 'rate_limited', httpStatus: 429, message: 'The AI is busy. Try again in a minute.' };
+        : { code: 'rate_limited', httpStatus: 429, message: 'The AI is busy. Please try again later.' };
       const e = new Error(cls.message);
       e.status = cls.httpStatus;
       // attachRateLimitContext fills scope/model/corrId/retryAfter diagnostics

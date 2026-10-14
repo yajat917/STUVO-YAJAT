@@ -382,7 +382,13 @@
     "supportTitle": "మద్దతు",
     "timeLeft": "మిగిలింది",
     "resetDone2": "పూర్తయింది",
-    "focusTimeLine": "{count} నిమి దృష్టి సమయం"
+    "focusTimeLine": "{count} నిమి దృష్టి సమయం",
+    "aiUnreachable": "Couldn't reach the assistant. Please check your connection and try again.",
+    "aiFailed": "The assistant could not reply.",
+    "historySafe": "Your chat history is safe.",
+    "supportLine": "If you need support right now, please reach out to a trusted adult or counselor.",
+    "addKeyHint": "Tap the AI key button in the top bar to add your free OpenRouter key, or ask your admin to set the server key — then send your message again.",
+    "_translationFlag": "PLACEHOLDER-ENGLISH-NEEDS-TRANSLATION: aiUnreachable/aiFailed/historySafe/supportLine/addKeyHint are English placeholders"
   },
   "accessibility": {
     "title": "యాక్సెసిబిలిటీ",
@@ -925,7 +931,8 @@
     "err_timeout": "The AI request timed out. Please try again.",
     "err_not_configured": "The AI server is not configured yet. Please tell your admin.",
     "err_upstream": "The AI service had a problem. Please try again.",
-    "_translationFlag": "PLACEHOLDER-ENGLISH-NEEDS-TRANSLATION: ai.err_* keys are English placeholders"
+    "_translationFlag": "PLACEHOLDER-ENGLISH-NEEDS-TRANSLATION: ai.err_* keys are English placeholders",
+    "err_rate_limited_wait": "The AI is busy. Try again in about {n} seconds."
   },
   "language": {
     "choose": "మీ భాషను ఎంచుకోండి",

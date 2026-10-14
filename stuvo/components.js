@@ -938,14 +938,23 @@ function _aiCodedError(code, message) {
 // the translation; codes whose server message carries the specific cause
 // (account_issue data-policy steps, bad_response feature detail) prefer the
 // server message so the exact fix is never hidden behind a generic string.
-function aiErrorTextFor(code, serverMessage) {
-    const tt = (typeof t === 'function') ? t : ((k, d) => d);
+function aiErrorTextFor(code, serverMessage, retryAfterSec) {
+    const tt = (typeof t === 'function') ? t : ((k, d, p) => d);
     const srv = (serverMessage === null || serverMessage === undefined) ? '' : String(serverMessage).trim();
+    const waitSecs = Number(retryAfterSec) > 0 ? Math.min(Math.floor(Number(retryAfterSec)), 600) : 0;
     switch (code) {
         case 'daily_limit':
             return tt('ai.err_daily_limit', "The AI's free daily limit has been reached. It resets daily — please try again later.");
         case 'rate_limited':
-            return tt('ai.err_rate_limited', 'The AI is busy. Try again in a minute.');
+            // Honest timing only: a concrete wait is shown IFF the server
+            // supplied Retry-After. Otherwise no wait is promised (a bare 429
+            // may be a transient throttle OR a daily cap with an
+            // undescriptive body — the two cannot always be told apart).
+            if (waitSecs > 0) {
+                const tpl = tt('ai.err_rate_limited_wait', 'The AI is busy. Try again in about {n} seconds.');
+                return String(tpl).replace('{n}', String(waitSecs));
+            }
+            return tt('ai.err_rate_limited', 'The AI is busy. Please try again later.');
         case 'timeout':
             return tt('ai.err_timeout', 'The AI request timed out. Please try again.');
         case 'model_unavailable':
@@ -962,6 +971,19 @@ function aiErrorTextFor(code, serverMessage) {
         default:
             return srv || tt('ai.err_upstream', 'AI service error. Please try again.');
     }
+}
+
+// Genuine-connectivity discriminator for error rendering. "Check your
+// connection" may ONLY appear when the request itself never reached our
+// server. Any structured server failure (contract `code` present) is by
+// definition NOT a connectivity problem — even a network-flavored message
+// with a code came back through the server. Contract names are untouched;
+// this only reads them.
+function isConnectivityError(err) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+    if (err && typeof err.code === 'string' && err.code) return false;
+    const m = String((err && err.message) || '');
+    return /failed to fetch|networkerror|network request failed|load failed|fetch failed|offline|ERR_INTERNET|ERR_NETWORK|NS_ERROR_OFFLINE/i.test(m);
 }
 
 // Day-cache for automatic (no-click) AI widgets: stores {date, data} in
@@ -1047,8 +1069,10 @@ async function _safeApiCallInner(endpoint, payload) {
         if (data && typeof data === 'object' && (data.error || data.ok === false)) {
             const code200 = (data && data.code) || '';
             if (code200 === 'daily_limit') _aiDailyCapHit = true;
-            const err200 = _aiCodedError(code200, aiErrorTextFor(code200, sanitizeServerMessage((data && (data.message || data.error)) || '', 280)));
+            const wait200 = Number(data && (data.retryAfterSec || data.retryAfter)) > 0 ? Number(data.retryAfterSec || data.retryAfter) : 0;
+            const err200 = _aiCodedError(code200, aiErrorTextFor(code200, sanitizeServerMessage((data && (data.message || data.error)) || '', 280), wait200));
             if (data && typeof data.escalationFlag === 'boolean') err200.escalationFlag = data.escalationFlag;
+            if (wait200 > 0) err200.retryAfterSec = Math.min(Math.floor(wait200), 600);
             throw err200;
         }
         return data;
@@ -1119,26 +1143,31 @@ async function _safeApiCallInner(endpoint, payload) {
     if (status === 429) {
         // Contract codes first: daily_limit engages session cap mode (no more
         // AI requests are sent; the user retries tomorrow). Everything else
-        // is a transient throttle — the user retries once after the wait.
+        // is a throttle of unknown duration — a concrete wait is stated ONLY
+        // when the server supplied Retry-After (a bare 429 may be transient
+        // or a daily cap with an undescriptive body; never invent a wait).
         // No automatic retry or key fallback here (that would add load while
         // throttled). NOTE: the former local cooldown breaker was removed —
         // every user action still sends its request; throttling is enforced
         // only by the server/upstream, plus cap mode above for daily caps.
-        const waitSecs = serverRetryAfter > 0 ? serverRetryAfter : 60;
         if (serverCode === 'daily_limit') {
             _aiDailyCapHit = true;
-            throw codedThrow('daily_limit', aiErrorTextFor('daily_limit', serverMsg));
+            throw codedThrow('daily_limit', aiErrorTextFor('daily_limit', serverMsg, serverRetryAfter));
         }
         const isAppLimit = serverCode === 'APP_RATE_LIMIT'
             || (!serverCode && /too many requests/i.test(serverMsg || '') && !/openrouter|provider/i.test(serverMsg || ''));
         if (isAppLimit) {
-            throw codedThrow('', `You're sending requests too quickly (application limit, HTTP 429 for ${endpoint}). Please wait about ${waitSecs}s and try again — no need to resend repeatedly.`);
+            const appWait = serverRetryAfter > 0 ? ` Please wait about ${serverRetryAfter}s and try again — no need to resend repeatedly.` : ' Please try again later — no need to resend repeatedly.';
+            throw codedThrow('', `You're sending requests too quickly (application limit, HTTP 429 for ${endpoint}).${appWait}`);
         }
         if (serverCode === 'rate_limited' || serverCode === '' || serverScope === 'platform') {
-            throw codedThrow('rate_limited', aiErrorTextFor('rate_limited', ''));
+            throw codedThrow('rate_limited', aiErrorTextFor('rate_limited', '', serverRetryAfter));
         }
-        const modelBit = serverModel ? ` (provider limit, model ${sanitizeServerMessage(serverModel, 80)})` : '';
-        throw codedThrow('rate_limited', `The AI provider is rate-limited right now (HTTP 429 for ${endpoint}${modelBit}). Please wait about ${waitSecs}s and retry once — your message is safe.`);
+        if (serverRetryAfter > 0) {
+            const modelBit = serverModel ? ` (provider limit, model ${sanitizeServerMessage(serverModel, 80)})` : '';
+            throw codedThrow('rate_limited', `The AI provider is rate-limited right now (HTTP 429 for ${endpoint}${modelBit}). Try again in about ${serverRetryAfter}s — your message is safe.`);
+        }
+        throw codedThrow('rate_limited', aiErrorTextFor('rate_limited', '', 0));
     }
     const clean = sanitizeServerMessage(serverMsg, 280);
     throw codedThrow('', aiErrorTextFor(serverCode, clean

@@ -263,6 +263,19 @@ async function renderStudentWellbeingAssistant(container) {
     const typing = showTyping();
     const sendBtn = container.querySelector('#wb-send');
     sendBtn.disabled = true; sendBtn.textContent = '...';
+    // Crisis pre-check runs BEFORE any network call so the banner and the
+    // persisted flag never depend on AI success (server re-checks in all 6
+    // languages and returns escalationFlag even on failure).
+    const crisisBits = ['hurt myself', 'suicide', 'kill myself', 'want to die', 'self harm', 'self-harm', 'end my life', 'suicidal', 'take my life'];
+    let localCrisis = false;
+    try { localCrisis = crisisBits.some(kw => String(prompt).toLowerCase().includes(kw)); } catch (e) {}
+    // Persist the user's message BEFORE the AI call (same wellbeingChats
+    // write pattern as the post-success save, which merges over it). The
+    // "history is safe" sentence is shown on failure ONLY if this write
+    // succeeded — never as boilerplate.
+    let preSaved = false;
+    try { await saveChatToFirestore(localCrisis); preSaved = true; }
+    catch (e) { preSaved = false; }
     try {
       const data = await safeApiCall('/api/ai', {
         action: 'wellbeingAssistant', prompt, message: prompt,
@@ -288,38 +301,44 @@ async function renderStudentWellbeingAssistant(container) {
       console.error('[wellbeingAssistant]', err);
       typing.remove();
       // Keep history clean: drop the just-sent user message so a retry sends a
-      // coherent thread (no dangling user turn with no assistant reply).
+      // coherent thread (no dangling user turn with no assistant reply). The
+      // persisted copy from the pre-call save stays in Firestore regardless.
       try {
         if (conversationHistory.length && conversationHistory[conversationHistory.length - 1].role === 'user'
             && conversationHistory[conversationHistory.length - 1].content === prompt) {
           conversationHistory.pop();
         }
       } catch (e) {}
-      const reason = (err && err.message) ? String(err.message) : 'connection failed';
-      // SAFETY: the banner never depends on AI success. The server computes
-      // the crisis check BEFORE the model call and returns escalationFlag even
-      // on failure (err.escalationFlag); as a second net, match the same
-      // high-precision phrases locally on the just-sent message.
-      let errEscalated = !!(err && err.escalationFlag);
-      if (!errEscalated) {
-        try {
-          const crisisBits = ['hurt myself', 'suicide', 'kill myself', 'want to die', 'self harm', 'self-harm', 'end my life', 'suicidal', 'take my life'];
-          errEscalated = crisisBits.some(kw => String(prompt).toLowerCase().includes(kw));
-        } catch (e) {}
-      }
+      // SAFETY: the banner never depends on AI success — server flag (all 6
+      // languages, computed pre-call) or the local pre-call match above.
+      const errEscalated = !!(err && err.escalationFlag) || localCrisis;
       if (errEscalated) {
         escalationBanner.style.display = 'block';
         currentEscalation = true;
       }
-      const needsKey = /no API key|AI Key|OPENROUTER_API_KEY|server has no API key/i.test(reason);
-      // Honest unavailable message with the existing trusted-adult options —
-      // never a canned reply posing as the assistant (system-styled bubble).
-      addBubble('assistant', `⚠️ Couldn't reach the assistant (${reason.slice(0, 160)}). `
-        + (needsKey
-          ? 'Tap the 🤖 button in the top bar to add your free OpenRouter key, or ask your admin to set the server key — then send your message again.'
-          : 'Please check your connection and send your message again. Your chat history is safe.')
-        + ' If you need support right now, please reach out to a trusted adult or counselor.', { system: true });
-      showToast(err.message || 'Failed to get response', 'error');
+      // Connectivity wording ONLY for genuine connectivity failures (request
+      // never reached our server). Any structured server error shows its own
+      // accurate message with no connectivity sentence.
+      const tt = (typeof _i18n_t === 'function') ? _i18n_t : ((k, d) => d || k);
+      let body;
+      if ((typeof isConnectivityError === 'function' ? isConnectivityError(err) : /failed to fetch|network|offline/i.test(String((err && err.message) || '')))) {
+        body = '⚠️ ' + tt('wellbeing.aiUnreachable', "Couldn't reach the assistant. Please check your connection and try again.");
+      } else {
+        const accurate = (err && err.message) ? String(err.message) : tt('wellbeing.aiFailed', 'The assistant could not reply.');
+        body = '⚠️ ' + accurate;
+        if (err && err.code === 'not_configured') {
+          body += ' ' + tt('wellbeing.addKeyHint', 'Tap the 🤖 button in the top bar to add your free OpenRouter key, or ask your admin to set the server key — then send your message again.');
+        }
+      }
+      // History claim only when the pre-call write actually succeeded.
+      if (preSaved) body += ' ' + tt('wellbeing.historySafe', 'Your chat history is safe.');
+      // Support line in EVERY failure state, plus the existing banner/links.
+      body += ' ' + tt('wellbeing.supportLine', 'If you need support right now, please reach out to a trusted adult or counselor.');
+      // Never a canned reply posing as the assistant (system-styled bubble).
+      addBubble('assistant', body, { system: true });
+      // Keep the student's text: restore the unsent message to the input.
+      input.value = prompt;
+      showToast((err && err.message) || 'Failed to get response', 'error');
     } finally {
       isSending = false;
       sendBtn.disabled = false; sendBtn.textContent = 'Send ↑';
