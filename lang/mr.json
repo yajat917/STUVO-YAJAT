@@ -976,7 +976,8 @@
     "err_not_configured": "The AI server is not configured yet. Please tell your admin.",
     "err_upstream": "The AI service had a problem. Please try again.",
     "_translationFlag": "PLACEHOLDER-ENGLISH-NEEDS-TRANSLATION: ai.err_* keys are English placeholders",
-    "err_rate_limited_wait": "The AI is busy. Try again in about {n} seconds."
+    "err_rate_limited_wait": "The AI is busy. Try again in about {n} seconds.",
+    "err_connectivity": "Network request failed: could not reach the AI service. Please check your connection and try again."
   },
   "language": {
     "choose": "तुमची भाषा निवडा",

@@ -305,6 +305,7 @@ async function expectCall(name, stubs, fn, check) {
   {
     assert.strictEqual(isConnectivityError(new Error('Failed to fetch')), true);
     assert.strictEqual(isConnectivityError(new Error('Load failed')), true);
+    assert.strictEqual(isConnectivityError(new Error('Network request failed: could not reach the AI service. Please check your connection and try again.')), true);
     const offlineCheck = new Function('navigator', extractFn(compSrc, 'isConnectivityError') + '; return isConnectivityError;')({ onLine: false });
     assert.strictEqual(offlineCheck(new Error('anything')), true);
     // Non-network plain error (e.g. missing-key fallback) is NOT connectivity

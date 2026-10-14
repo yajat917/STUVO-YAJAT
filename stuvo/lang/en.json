@@ -934,7 +934,8 @@
     "err_timeout": "The AI request timed out. Please try again.",
     "err_not_configured": "The AI server is not configured yet. Please tell your admin.",
     "err_upstream": "The AI service had a problem. Please try again.",
-    "err_rate_limited_wait": "The AI is busy. Try again in about {n} seconds."
+    "err_rate_limited_wait": "The AI is busy. Try again in about {n} seconds.",
+    "err_connectivity": "Network request failed: could not reach the AI service. Please check your connection and try again."
   },
   "language": {
     "choose": "Choose your language",

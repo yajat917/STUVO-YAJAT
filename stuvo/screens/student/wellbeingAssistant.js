@@ -172,7 +172,7 @@ async function renderStudentWellbeingAssistant(container) {
         content: String(m.content || ''),
       }))
       .filter(m => m.content.length > 0);
-    if (!snapshot.length) return;
+    if (!snapshot.length) return false;
     try {
       const data = {
         messages: snapshot,
@@ -193,7 +193,13 @@ async function renderStudentWellbeingAssistant(container) {
         try { await updateDoc(doc(db, 'users', uid, 'wellbeingChats', chatId), { chatId: chatId }); } catch {}
       }
       loadHistory();
-    } catch (e) { console.error('[wellbeingChat save]', e); }
+      return true;
+    } catch (e) {
+      // Report failure to the caller (the "history is safe" sentence depends
+      // on it) instead of resolving as if the write had succeeded.
+      console.error('[wellbeingChat save]', e);
+      return false;
+    }
   }
 
   async function loadHistory() {
@@ -274,7 +280,7 @@ async function renderStudentWellbeingAssistant(container) {
     // "history is safe" sentence is shown on failure ONLY if this write
     // succeeded — never as boilerplate.
     let preSaved = false;
-    try { await saveChatToFirestore(localCrisis); preSaved = true; }
+    try { preSaved = !!(await saveChatToFirestore(localCrisis)); }
     catch (e) { preSaved = false; }
     try {
       const data = await safeApiCall('/api/ai', {

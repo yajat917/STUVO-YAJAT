@@ -1031,7 +1031,21 @@ async function _safeApiCallInner(endpoint, payload) {
     } catch (err) {
         // Network failure (static host, offline, CORS): try per-user-key fallback.
         console.warn(`Fallback triggered for ${endpoint} due to network error:`, err && err.message);
-        return await handleClientFallback(endpoint, payload);
+        const fetchFailed = (typeof navigator !== 'undefined' && navigator.onLine === false)
+            || /failed to fetch|networkerror|network request failed|load failed|fetch failed|offline|ERR_INTERNET|ERR_NETWORK|NS_ERROR_OFFLINE/i.test(String((err && err.message) || ''));
+        try {
+            return await handleClientFallback(endpoint, payload);
+        } catch (fbErr) {
+            // Genuine connectivity failure that no fallback could serve: say
+            // so plainly instead of detouring into key setup (a key would not
+            // help offline). Screens gate their "check your connection"
+            // sentence on exactly this failure shape — see isConnectivityError.
+            if (fetchFailed && !(fbErr && fbErr.code)) {
+                const tt = (typeof t === 'function') ? t : ((k, d) => d);
+                throw new Error(tt('ai.err_connectivity', 'Network request failed: could not reach the AI service. Please check your connection and try again.'));
+            }
+            throw fbErr;
+        }
     }
     const status = response.status;
     const ct = (response.headers && response.headers.get) ? (response.headers.get('content-type') || '') : '';
