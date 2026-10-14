@@ -916,7 +916,16 @@
     "submitFailedMsg": "அறிக்கையைச் சமர்ப்பிக்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்."
   },
   "ai": {
-    "wellbeingSystemPrompt": "நீங்கள் ஸ்டூவோ நல்வாழ்வு உதவியாளர், பள்ளி மாணவர்களுக்கான ஆதரவான கேட்கும் கருவி."
+    "wellbeingSystemPrompt": "நீங்கள் ஸ்டூவோ நல்வாழ்வு உதவியாளர், பள்ளி மாணவர்களுக்கான ஆதரவான கேட்கும் கருவி.",
+    "err_daily_limit": "The AI's free daily limit has been reached. It resets daily — please try again later.",
+    "err_rate_limited": "The AI is busy. Try again in a minute.",
+    "err_model_unavailable": "The configured AI model is currently unavailable. Please try again in a bit.",
+    "err_account_issue": "The AI service has an account issue. Please tell your admin.",
+    "err_bad_response": "The AI returned an unexpected format. Please try again.",
+    "err_timeout": "The AI request timed out. Please try again.",
+    "err_not_configured": "The AI server is not configured yet. Please tell your admin.",
+    "err_upstream": "The AI service had a problem. Please try again.",
+    "_translationFlag": "PLACEHOLDER-ENGLISH-NEEDS-TRANSLATION: ai.err_* keys are English placeholders"
   },
   "language": {
     "choose": "உங்கள் மொழியை தேர்வு செய்யவும்",

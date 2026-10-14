@@ -296,7 +296,24 @@ async function renderStudentWellbeingAssistant(container) {
         }
       } catch (e) {}
       const reason = (err && err.message) ? String(err.message) : 'connection failed';
+      // SAFETY: the banner never depends on AI success. The server computes
+      // the crisis check BEFORE the model call and returns escalationFlag even
+      // on failure (err.escalationFlag); as a second net, match the same
+      // high-precision phrases locally on the just-sent message.
+      let errEscalated = !!(err && err.escalationFlag);
+      if (!errEscalated) {
+        try {
+          const crisisBits = ['hurt myself', 'suicide', 'kill myself', 'want to die', 'self harm', 'self-harm', 'end my life', 'suicidal', 'take my life'];
+          errEscalated = crisisBits.some(kw => String(prompt).toLowerCase().includes(kw));
+        } catch (e) {}
+      }
+      if (errEscalated) {
+        escalationBanner.style.display = 'block';
+        currentEscalation = true;
+      }
       const needsKey = /no API key|AI Key|OPENROUTER_API_KEY|server has no API key/i.test(reason);
+      // Honest unavailable message with the existing trusted-adult options —
+      // never a canned reply posing as the assistant (system-styled bubble).
       addBubble('assistant', `⚠️ Couldn't reach the assistant (${reason.slice(0, 160)}). `
         + (needsKey
           ? 'Tap the 🤖 button in the top bar to add your free OpenRouter key, or ask your admin to set the server key — then send your message again.'

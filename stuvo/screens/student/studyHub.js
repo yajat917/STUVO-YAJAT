@@ -901,14 +901,20 @@ function bindToday(container, ctx) {
             }
             var priorities;
             try {
-                var data = await safeApiCall('/api/ai', {
+                // Automatic widget (no click): day-cached — repeat Study Hub
+                // visits reuse today's result instead of spending quota.
+                var nbaPayloadSh = {
                     action: 'nextBestAction',
                     incompleteHomework: incompleteHomework.slice(0, 5),
                     recentlyStudiedSubjects: recentlyStudiedSubjects,
                     allEnrolledSubjects: ctx.subjects,
                     grade: ctx.grade,
                     languageName: ctx.languageName
-                });
+                };
+                var nbaKeySh = 'nba:sh:' + JSON.stringify(nbaPayloadSh.incompleteHomework).slice(0, 400);
+                var data = (typeof getDayCachedAI === 'function')
+                    ? await getDayCachedAI(nbaKeySh, function () { return safeApiCall('/api/ai', nbaPayloadSh); })
+                    : await safeApiCall('/api/ai', nbaPayloadSh);
                 priorities = (data && data.priorities && data.priorities.length) ? data.priorities : fallback().priorities;
             } catch (e) { priorities = fallback().priorities; }
             nbaBody.innerHTML = priorities.slice(0, 3).map(function (p, i) {
@@ -1749,7 +1755,14 @@ function bindTrack(container, ctx) {
             if (data.status !== 'needs_attention' && data.status !== 'steady') return;
             (async function () {
                 try {
-                    var res = await safeApiCall('/api/ai', { action: 'subjectHealthNudge', subject: subject, status: data.status, grade: ctx.grade, languageName: ctx.languageName });
+                    // Best-effort nudge, day-cached per subject+status so one
+                    // Study Hub load costs at most one AI request per subject
+                    // per day (zero on repeat visits) instead of one per load.
+                    var nudgePayload = { action: 'subjectHealthNudge', subject: subject, status: data.status, grade: ctx.grade, languageName: ctx.languageName };
+                    var nudgeKey = 'nudge:' + subject + ':' + data.status + ':' + (ctx.languageName || 'English');
+                    var res = (typeof getDayCachedAI === 'function')
+                        ? await getDayCachedAI(nudgeKey, function () { return safeApiCall('/api/ai', nudgePayload); })
+                        : await safeApiCall('/api/ai', nudgePayload);
                     var slot = row.querySelector('[data-nudge-for="' + subject.replace(/"/g, '&quot;') + '"]');
                     if (slot && res && res.nudge) slot.textContent = res.nudge;
                 } catch (e) { /* nudge is best-effort; chip still shows computed status */ }

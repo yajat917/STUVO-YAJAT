@@ -960,7 +960,16 @@
     "submitFailedMsg": "रिपोर्ट सबमिट नहीं हो सकी। कृपया पुनः प्रयास करें।"
   },
   "ai": {
-    "wellbeingSystemPrompt": "आप स्टुवो वेलबीनेस असिस्टेंट हैं, जो स्कूल के छात्रों के लिए एक सहायक सुनने का उपकरण हैं।"
+    "wellbeingSystemPrompt": "आप स्टुवो वेलबीनेस असिस्टेंट हैं, जो स्कूल के छात्रों के लिए एक सहायक सुनने का उपकरण हैं।",
+    "err_daily_limit": "The AI's free daily limit has been reached. It resets daily — please try again later.",
+    "err_rate_limited": "The AI is busy. Try again in a minute.",
+    "err_model_unavailable": "The configured AI model is currently unavailable. Please try again in a bit.",
+    "err_account_issue": "The AI service has an account issue. Please tell your admin.",
+    "err_bad_response": "The AI returned an unexpected format. Please try again.",
+    "err_timeout": "The AI request timed out. Please try again.",
+    "err_not_configured": "The AI server is not configured yet. Please tell your admin.",
+    "err_upstream": "The AI service had a problem. Please try again.",
+    "_translationFlag": "PLACEHOLDER-ENGLISH-NEEDS-TRANSLATION: ai.err_* keys are English placeholders"
   },
   "language": {
     "choose": "आपकी भाषा चुनें",

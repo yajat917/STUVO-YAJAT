@@ -186,7 +186,13 @@ async function renderStudentPracticeBits(container) {
                     var rotated = subsForGen[dayOfYear % subsForGen.length] || subsForGen[0];
                     // Pass full list; backend may pick first but we provide rotated as primary
                     const data = await safeApiCall('/api/ai', { action: 'practiceBit', subjects: subsForGen, subject: rotated, grade: getPracticeGrade(), languageName: getPracticeLangName() });
-                    if (!data || !data.question) throw new Error('No question returned. Please try again.');
+                    // A 200 with no question means malformed model output
+                    // (server failures already threw a coded error above) —
+                    // report the accurate cause, never a generic retry line.
+                    if (!data || !data.question) {
+                        const msg = (typeof aiErrorTextFor === 'function' ? aiErrorTextFor('bad_response', 'The question generator returned an incomplete question. Please try again.') : 'The question generator returned an incomplete question. Please try again.');
+                        throw (typeof _aiCodedError === 'function' ? _aiCodedError('bad_response', msg) : new Error(msg));
+                    }
                     // Keep correctAnswer alongside (never rendered until answered) so checking has a reference.
                     todayBit = { subject: data.subject || rotated, question: data.question, correctAnswer: data.correctAnswer || '', hint: data.hint || '' };
                     await setDoc(doc(db, 'users', uid, 'practiceBits', today), toFirestoreBit(todayBit, rotated));

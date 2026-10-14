@@ -32,17 +32,17 @@ function getLanguageInstruction(languageName) {
 // Throws {status:502} with a feature-specific message instead of a raw SyntaxError.
 function parseModelJSON(content, featureMessage) {
   const text = (content === null || content === undefined) ? '' : String(content);
-  if (!text.trim()) throw { status: 502, message: featureMessage || 'The AI returned an empty response. Please try again.' };
+  if (!text.trim()) throw { status: 502, code: 'bad_response', message: featureMessage || 'The AI returned an empty response. Please try again.' };
   try {
     return parseJSON(text);
   } catch (e) {
-    throw { status: 502, message: featureMessage || 'The AI returned an unexpected format. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: featureMessage || 'The AI returned an unexpected format. Please try again.' };
   }
 }
 
 function requireNonEmptyText(v, featureMessage) {
   const s = (v === null || v === undefined) ? '' : String(v).trim();
-  if (!s) throw { status: 502, message: featureMessage || 'The AI returned an empty response. Please try again.' };
+  if (!s) throw { status: 502, code: 'bad_response', message: featureMessage || 'The AI returned an empty response. Please try again.' };
   return s;
 }
 
@@ -88,7 +88,7 @@ Homework text: ${homeworkText}`;
   const content = await callOpenRouter(prompt);
   const result = parseModelJSON(content, 'The homework summarizer returned an unexpected format. Please try again.');
   if (!result.summary || !Array.isArray(result.keyPoints) || !result.whatYouNeedToDo || !Array.isArray(result.importantConcepts)) {
-    throw { status: 502, message: 'The homework summarizer returned an incomplete summary. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: 'The homework summarizer returned an incomplete summary. Please try again.' };
   }
   result.summary = cleanMathFormatting(String(result.summary));
   result.whatYouNeedToDo = cleanMathFormatting(String(result.whatYouNeedToDo));
@@ -115,7 +115,7 @@ async function handleGenerateQuiz(body) {
   const prompt = `${STUVO_TUTOR_VOICE}\n${languageInstruction}\n\nGenerate ${questionCount} multiple choice questions ${source} for a grade ${grade || 'school'} student, at ${difficulty} difficulty.${subjectNote}${gradeNote}${avoidNote} All text must use plain text math notation only (x^2, √, fractions as (a)/(b)) — never LaTeX.${langJsonNote}`;
   const content = await callOpenRouter(prompt);
   const text = (content === null || content === undefined) ? '' : String(content);
-  if (!text.trim()) throw { status: 502, message: 'The quiz generator returned an unexpected format. Please try again.' };
+  if (!text.trim()) throw { status: 502, code: 'bad_response', message: 'The quiz generator returned an unexpected format. Please try again.' };
   let questions;
   // Quiz expects a top-level JSON array. Free-tier models often wrap it in
   // prose — extract the outermost [...] FIRST (generic parseJSON prefers {...}
@@ -129,18 +129,18 @@ async function handleGenerateQuiz(body) {
       const parsed = parseModelJSON(text, 'The quiz generator returned an unexpected format. Please try again.');
       questions = Array.isArray(parsed) ? parsed : parsed.questions;
     } catch (e) {
-      throw { status: 502, message: "The quiz generator returned an unexpected format. Please try again." };
+      throw { status: 502, code: 'bad_response', message: "The quiz generator returned an unexpected format. Please try again." };
     }
   }
   if (!Array.isArray(questions) || questions.length === 0) {
-    throw { status: 502, message: "No questions were generated. Try a different topic." };
+    throw { status: 502, code: 'bad_response', message: "No questions were generated. Try a different topic." };
   }
   // Validate + normalize schema the frontend depends on:
   // {question, options[4], correctIndex 0-3, explanation}
   questions = questions.filter(q => q && typeof q.question === 'string' && q.question.trim()
     && Array.isArray(q.options) && q.options.length === 4);
   if (!questions.length) {
-    throw { status: 502, message: "The quiz generator returned an incomplete format. Please try again." };
+    throw { status: 502, code: 'bad_response', message: "The quiz generator returned an incomplete format. Please try again." };
   }
   questions.forEach(q => {
     q.question = cleanMathFormatting(String(q.question));
@@ -174,7 +174,7 @@ async function handlePracticeBit(body) {
   const result = parseModelJSON(text, 'The question generator returned an unexpected format. Please try again.');
   // Models sometimes use "answer" instead of the requested "correctAnswer".
   if (!result.question || !(result.correctAnswer || result.answer)) {
-    throw { status: 502, message: 'The question generator returned an incomplete question. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: 'The question generator returned an incomplete question. Please try again.' };
   }
   result.question = cleanMathFormatting(String(result.question));
   result.correctAnswer = cleanMathFormatting(String(result.correctAnswer || result.answer));
@@ -199,7 +199,7 @@ async function handleCheckAnswer(body) {
   const content = await callOpenRouter(prompt);
   const result = parseModelJSON(content, 'The answer checker returned an unexpected format. Please try again.');
   if (typeof result.isCorrect === 'undefined' || !result.feedback) {
-    throw { status: 502, message: 'The answer checker returned an incomplete evaluation. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: 'The answer checker returned an incomplete evaluation. Please try again.' };
   }
   result.feedback = cleanMathFormatting(String(result.feedback));
   if (result.correctAnswer) result.correctAnswer = cleanMathFormatting(result.correctAnswer);
@@ -220,7 +220,7 @@ async function handleGenerateRevision(body) {
   const content = await callOpenRouter(prompt);
   const result = parseModelJSON(content, 'The revision generator returned an unexpected format. Please try again.');
   if (!Array.isArray(result.keyConcepts) || result.keyConcepts.length === 0 || !result.quickNotes) {
-    throw { status: 502, message: 'The revision generator returned an incomplete response. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: 'The revision generator returned an incomplete response. Please try again.' };
   }
   result.formulas = (result.formulas || []).map(cleanMathFormatting);
   result.quickNotes = cleanMathFormatting(result.quickNotes || '');
@@ -250,7 +250,7 @@ Based ONLY on this real data, write a short (3-4 sentence) supportive summary of
   const content = await callOpenRouter(prompt);
   const result = parseModelJSON(content, 'The weakness analyzer returned an unexpected format. Please try again.');
   if (!result.summary || !result.suggestion) {
-    throw { status: 502, message: 'The weakness analyzer returned an incomplete response. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: 'The weakness analyzer returned an incomplete response. Please try again.' };
   }
   result.summary = cleanMathFormatting(String(result.summary));
   result.suggestion = cleanMathFormatting(String(result.suggestion));
@@ -309,14 +309,14 @@ Give a short prioritized study recommendation, maximum 3 items. Keep each "reaso
   const content = await callOpenRouter(prompt);
   const parsed = parseModelJSON(content, 'The study recommender returned an unexpected format. Please try again.');
   if (!parsed || !Array.isArray(parsed.priorities) || parsed.priorities.length === 0) {
-    throw { status: 502, message: 'The study recommender returned an incomplete response. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: 'The study recommender returned an incomplete response. Please try again.' };
   }
   parsed.priorities = parsed.priorities.slice(0, 3).map(p => ({
     action: String((p && p.action) || '').slice(0, 200),
     reason: String((p && p.reason) || '').slice(0, 200),
     estimatedMinutes: Math.min(180, Math.max(5, Number((p && p.estimatedMinutes)) || 25))
   })).filter(p => p.action);
-  if (!parsed.priorities.length) throw { status: 502, message: 'The study recommender returned an incomplete response. Please try again.' };
+  if (!parsed.priorities.length) throw { status: 502, code: 'bad_response', message: 'The study recommender returned an incomplete response. Please try again.' };
   return parsed;
 }
 
@@ -333,7 +333,7 @@ Give ONE short, actionable recommendation, under 20 words, plain direct language
   const content = await callOpenRouter(prompt);
   const parsed = parseModelJSON(content, 'The class assistant returned an unexpected format. Please try again.');
   if (!parsed || !parsed.recommendation) {
-    throw { status: 502, message: 'The class assistant returned an incomplete response. Please try again.' };
+    throw { status: 502, code: 'bad_response', message: 'The class assistant returned an incomplete response. Please try again.' };
   }
   parsed.recommendation = cleanMathFormatting(String(parsed.recommendation));
   requireNonEmptyText(parsed.recommendation, 'The class assistant returned an empty response. Please try again.');
@@ -350,30 +350,22 @@ async function handleWellbeingAssistant(body) {
   const languageInstruction = getLanguageInstruction(languageName);
   const studentName = cappedStr(body.studentName, 60, 'studentName');
   if (!message || !String(message).trim()) throw { status: 400, message: 'prompt required' };
-  const SYSTEM_CONTEXT = `You are the Stuvo Wellbeing Assistant, a supportive listening tool for school students. Listen, help organize thoughts, suggest healthy coping strategies, help with study stress, help prepare what to say to a teacher/counselor, gently point toward school support. NEVER diagnose, NEVER pretend to be a licensed counselor, NEVER encourage secrecy from trusted adults, NEVER give dangerous advice, NEVER promise confidentiality you cannot guarantee, NEVER try to be the sole support for a serious situation. If the student describes danger, harm, or self-harm thoughts, respond with care and clearly encourage them to talk to a trusted adult or support service right away. Keep responses plain, warm, conversational — no markdown, no bullet lists unless walking through a technique step-by-step.`;
-  const nameLine = studentName ? ` The student's first name is ${studentName} — you may use it occasionally (not in every message).` : '';
-  const historyText = conversationHistory.map(m => `${m.role}: ${m.content}`).join('\n');
-  const prompt = `${languageInstruction}\n\n${SYSTEM_CONTEXT}${nameLine}\n\nConversation so far:\n${historyText || '(this is the first message)'}\n\nStudent: ${message}\n\nHold a real conversation, not a one-off answer:\n- Respond directly to what the student just shared — reflect it back briefly so they feel heard.\n- Keep it short (2-5 sentences) and end with ONE open follow-up question that invites them to continue, unless they asked for a specific technique (then guide them through it step by step instead).\n- Remember earlier turns: refer back to things they mentioned when relevant.\n- Vary your wording every reply — never repeat the same generic lines.`;
-  const replyRaw = await callOpenRouter(prompt);
-  // Fail visibly on empty model output — never substitute a generic message,
-  // otherwise every outage looks like the assistant repeating itself.
-  const replyText = requireNonEmptyText(replyRaw, 'The wellbeing assistant returned an empty response. Please try again.');
-  const replyClean = cleanMathFormatting(replyText);
-  const finalReply = replyClean.replace(/AI Counselor/gi, 'Stuvo Wellbeing Assistant');
-  // Extended concern keywords for all languages — CRITICAL: this list must be reviewed by native speakers for crisis-detection accuracy
-  // Flagged for manual review: Hindi, Bengali, Marathi, Telugu, Tamil equivalents need verification by native speakers before shipping
+  // SAFETY-CRITICAL: the crisis-keyword check runs BEFORE the model call and
+  // its result travels with BOTH success and failure responses, so the
+  // crisis-support banner never depends on AI success. Keyword lists are
+  // intentionally narrow (high-precision phrases) — see client pre-check.
   const concernKeywords = [
     // English
     'hurt myself', 'suicide', 'kill myself', 'want to die', 'end it', 'self harm', 'self-harm', 'end my life', 'suicidal', 'take my life',
-    // Hindi - आत्महत्या, खुद को चोट, मरना चाहता हूँ, etc. (NEEDS REVIEW)
+    // Hindi - आत्महत्या, खुद को चोट, मरना चाहता हूँ, etc. (NEEDS REVIEW by native speakers)
     'आत्महत्या', 'खुद को चोट', 'मरना चाहता', 'मरना चाहती', 'जीवन समाप्त', 'खुदकुशी',
-    // Bengali - আত্মহত্যা etc. (NEEDS REVIEW)
+    // Bengali - আত্মহত্যা etc. (NEEDS REVIEW by native speakers)
     'আত্মহত্যা', 'নিজেকে আঘাত', 'মরে যেতে চাই',
-    // Marathi - आत्महत्या etc. (NEEDS REVIEW)
+    // Marathi - आत्महत्या etc. (NEEDS REVIEW by native speakers)
     'आत्महत्या', 'स्वतःला इजा', 'मरायचे आहे',
-    // Telugu - ఆత్మహత్య etc. (NEEDS REVIEW)
+    // Telugu - ఆత్మహత్య etc. (NEEDS REVIEW by native speakers)
     'ఆత్మహత్య', 'నన్ను నేను గాయపరచు', 'చనిపోవాలని',
-    // Tamil - தற்கொலை etc. (NEEDS REVIEW)
+    // Tamil - தற்கொலை etc. (NEEDS REVIEW by native speakers)
     'தற்கொலை', 'என்னை காயப்படுத்த', 'சாக விரும்புகிறேன்'
   ];
   const lowerMsg = String(message).toLowerCase();
@@ -383,6 +375,29 @@ async function handleWellbeingAssistant(body) {
       if (m && m.content && concernKeywords.some(kw => String(m.content).toLowerCase().includes(kw.toLowerCase()))) { escalationFlag = true; break; }
     }
   }
+  const SYSTEM_CONTEXT = `You are the Stuvo Wellbeing Assistant, a supportive listening tool for school students. Listen, help organize thoughts, suggest healthy coping strategies, help with study stress, help prepare what to say to a teacher/counselor, gently point toward school support. NEVER diagnose, NEVER pretend to be a licensed counselor, NEVER encourage secrecy from trusted adults, NEVER give dangerous advice, NEVER promise confidentiality you cannot guarantee, NEVER try to be the sole support for a serious situation. If the student describes danger, harm, or self-harm thoughts, respond with care and clearly encourage them to talk to a trusted adult or support service right away. Keep responses plain, warm, conversational — no markdown, no bullet lists unless walking through a technique step-by-step.`;
+  const nameLine = studentName ? ` The student's first name is ${studentName} — you may use it occasionally (not in every message).` : '';
+  // Small fixed cap: only the most recent turns travel upstream (token thrift
+  // and focus). The full thread stays in Firestore; the model needs recency.
+  const recentHistory = conversationHistory.slice(-8);
+  const historyText = recentHistory.map(m => `${m.role}: ${m.content}`).join('\n');
+  const prompt = `${languageInstruction}\n\n${SYSTEM_CONTEXT}${nameLine}\n\nConversation so far:\n${historyText || '(this is the first message)'}\n\nStudent: ${message}\n\nHold a real conversation, not a one-off answer:\n- Respond directly to what the student just shared — reflect it back briefly so they feel heard.\n- Keep it short (2-5 sentences) and end with ONE open follow-up question that invites them to continue, unless they asked for a specific technique (then guide them through it step by step instead).\n- Remember earlier turns: refer back to things they mentioned when relevant.\n- Vary your wording every reply — never repeat the same generic lines.`;
+  let replyRaw;
+  try {
+    replyRaw = await callOpenRouter(prompt);
+  } catch (e) {
+    // Fail visibly but carry the pre-computed escalation flag so the client
+    // can still show the support banner + trusted-adult options. Never a
+    // canned reply posing as the assistant.
+    if (typeof e === 'object' && e !== null) e.escalationFlag = escalationFlag;
+    throw e;
+  }
+  // Fail visibly on empty model output — never substitute a generic message,
+  // otherwise every outage looks like the assistant repeating itself.
+  // (This was the "single answer" cause: no canned text anywhere on this path.)
+  const replyText = requireNonEmptyText(replyRaw, 'The wellbeing assistant returned an empty response. Please try again.');
+  const replyClean = cleanMathFormatting(replyText);
+  const finalReply = replyClean.replace(/AI Counselor/gi, 'Stuvo Wellbeing Assistant');
   return { reply: finalReply, escalationFlag };
 }
 
@@ -430,22 +445,57 @@ module.exports = async (req, res) => {
     const result = await ACTIONS[action](body);
     res.status(200).json(result);
   } catch (e) {
-    const status = e.status || 500;
-    const message = e.message || 'AI service error. Please try again.';
-    // Pass through machine-readable diagnostics so the client can tell an
-    // application rate limit apart from upstream limits, and OpenRouter
-    // platform limits apart from provider limits (scope/upstreamType).
-    // Never include prompts, keys, or headers — only safe metadata.
-    const payload = { error: message };
-    if (e.code) payload.code = e.code;
-    if (e.retryAfter) payload.retryAfter = e.retryAfter;
-    if (e.model) payload.model = e.model;
-    if (e.corrId) payload.corrId = e.corrId;
-    if (Array.isArray(e.triedModels) && e.triedModels.length) payload.triedModels = e.triedModels.slice(0, 5);
-    if (e.scope) payload.scope = e.scope;
-    if (e.upstreamType) payload.upstreamType = e.upstreamType;
+    // Structured error contract: { ok:false, code, message, retryAfterSec? }
+    // with the correct HTTP status. `code` is one of: daily_limit,
+    // rate_limited, model_unavailable, account_issue, bad_response, timeout,
+    // not_configured, upstream_error. Legacy fields (error, retryAfter, code
+    // UPSTREAM_*) are kept alongside so older clients keep working; never
+    // include prompts, keys, headers, or raw upstream bodies.
+    const LEGACY_CODE_MAP = {
+      UPSTREAM_RATE_LIMIT: 'rate_limited',
+      UPSTREAM_MALFORMED: 'bad_response',
+      UPSTREAM_NULL_CONTENT: 'bad_response',
+      UPSTREAM_EMPTY: 'bad_response',
+      UPSTREAM_REFUSAL: 'upstream_error',
+    };
+    let code = (e && e.code) || '';
+    if (LEGACY_CODE_MAP[code]) code = LEGACY_CODE_MAP[code];
+    const message = (e && e.message) || 'AI service error. Please try again.';
+    const STATUS_BY_CODE = {
+      daily_limit: 429,
+      rate_limited: 429,
+      model_unavailable: 502,
+      account_issue: 502,
+      bad_response: 502,
+      timeout: 504,
+      not_configured: 500,
+      upstream_error: 502,
+    };
+    let status = (e && e.status) || 0;
+    if (code && STATUS_BY_CODE[code]) {
+      // Trust an already-correct upstream-derived status (429/402/504/500);
+      // otherwise use the code's canonical status (e.g. never surface a
+      // model_unavailable as 404 — the client treats 404 as a routing
+      // failure and would misdiagnose it).
+      if (!(status === 429 || status === 402 || status === 504 || status === 500)) {
+        status = STATUS_BY_CODE[code];
+      }
+    }
+    if (!status) status = 500;
+    const retryAfterSec = (e && Number(e.retryAfter) > 0)
+      ? Math.min(Math.floor(Number(e.retryAfter)), 600) : 0;
+    const payload = { ok: false, error: message, message };
+    if (code) payload.code = code;
+    if (retryAfterSec > 0) { payload.retryAfterSec = retryAfterSec; payload.retryAfter = retryAfterSec; }
+    if (e && e.model) payload.model = e.model;
+    if (e && e.corrId) payload.corrId = e.corrId;
+    if (e && Array.isArray(e.triedModels) && e.triedModels.length) payload.triedModels = e.triedModels.slice(0, 5);
+    if (e && e.scope) payload.scope = e.scope;
+    if (e && e.upstreamType) payload.upstreamType = e.upstreamType;
+    // Wellbeing safety: the pre-call escalation flag travels on failures too.
+    if (e && typeof e.escalationFlag === 'boolean') payload.escalationFlag = e.escalationFlag;
     console.error(`Error in action "${action}":`, message,
-      e.code ? `(code=${e.code}${e.scope ? `, scope=${e.scope}` : ''}${e.model ? `, model=${e.model}` : ''}${e.corrId ? `, corrId=${e.corrId}` : ''})` : '');
+      code ? `(code=${code}${e && e.scope ? `, scope=${e.scope}` : ''}${e && e.model ? `, model=${e.model}` : ''}${e && e.corrId ? `, corrId=${e.corrId}` : ''})` : '');
     res.status(status).json(payload);
   }
 };

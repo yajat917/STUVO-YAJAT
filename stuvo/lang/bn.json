@@ -916,7 +916,16 @@
     "submitFailedMsg": "রিপোর্ট জমা দেওয়া যায়নি। আবার চেষ্টা করুন।"
   },
   "ai": {
-    "wellbeingSystemPrompt": "আপনি স্টুভো ওয়েলবিং অ্যাসিস্ট্যান্ট, স্কুলের শিক্ষার্থীদের জন্য একটি সহায়ক শ্রবণ সরঞ্জাম।"
+    "wellbeingSystemPrompt": "আপনি স্টুভো ওয়েলবিং অ্যাসিস্ট্যান্ট, স্কুলের শিক্ষার্থীদের জন্য একটি সহায়ক শ্রবণ সরঞ্জাম।",
+    "err_daily_limit": "The AI's free daily limit has been reached. It resets daily — please try again later.",
+    "err_rate_limited": "The AI is busy. Try again in a minute.",
+    "err_model_unavailable": "The configured AI model is currently unavailable. Please try again in a bit.",
+    "err_account_issue": "The AI service has an account issue. Please tell your admin.",
+    "err_bad_response": "The AI returned an unexpected format. Please try again.",
+    "err_timeout": "The AI request timed out. Please try again.",
+    "err_not_configured": "The AI server is not configured yet. Please tell your admin.",
+    "err_upstream": "The AI service had a problem. Please try again.",
+    "_translationFlag": "PLACEHOLDER-ENGLISH-NEEDS-TRANSLATION: ai.err_* keys are English placeholders"
   },
   "language": {
     "choose": "আপনার ভাষা চয়ন করুন",

@@ -455,14 +455,21 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
                 data = { priorities: incomplete.slice(0,3).map(hw => ({ action: _i18n_t('dashboard.finishAction',{title: hw.title}), reason: _i18n_t('dashboard.dueReason',{date: hw.deadline||'soon'}), estimatedMinutes: 25 })) };
                 if (!incomplete.length) data = { priorities: [{ action: _i18n_t('dashboard.noPendingHomework','No pending homework'), reason: _i18n_t('dashboard.caughtUpReason','You are all caught up'), estimatedMinutes: 0 }] };
                 try {
-                    const j = await safeApiCall('/api/ai', {
+                    // Automatic widget (no click): day-cached so a dashboard
+                    // reload costs zero AI requests on a cache hit, at most
+                    // one per day per homework snapshot on a miss.
+                    const nbaPayload = {
                         action: 'nextBestAction',
                         incompleteHomework: incomplete.slice(0,5).map(hw=>({title:hw.title, subject:hw.subject||'General', hoursUntilDue: Math.round((new Date(hw.deadline)-new Date())/3600000)})),
                         recentlyStudiedSubjects:[],
                         allEnrolledSubjects: [...new Set(homeworkItems.map(h=>h.subject).filter(Boolean))],
                         grade: (appState.userData && appState.userData.grade != null) ? String(appState.userData.grade) : '',
                         languageName: ({ en:'English', hi:'Hindi', bn:'Bengali', mr:'Marathi', te:'Telugu', ta:'Tamil' })[window.currentUserLanguage] || window.currentUserLanguage || 'English'
-                    });
+                    };
+                    const nbaKey = 'nba:' + uid + ':' + JSON.stringify(nbaPayload.incompleteHomework).slice(0, 400);
+                    const j = (typeof getDayCachedAI === 'function')
+                        ? await getDayCachedAI(nbaKey, () => safeApiCall('/api/ai', nbaPayload))
+                        : await safeApiCall('/api/ai', nbaPayload);
                     if (j && j.priorities) data = j;
                 } catch(e) {}
             }

@@ -159,9 +159,15 @@ var _i18n_t = (typeof t==='function'?t:((k,d)=>d||k)); var _dummy_i18n = _i18n_t
             const avgQuizScore = 0;
             const weakTopics = [];
             try {
-                const data = await safeApiCall('/api/ai', {
+                // Automatic widget (no click): day-cached per class snapshot —
+                // repeat dashboard visits cost zero AI requests on a hit.
+                const pulsePayload = {
                     action: 'classPulse', completionPercent: completionPct, notSubmittedCount, avgQuizScore, weakTopics
-                });
+                };
+                const pulseKey = 'pulse:dash:' + JSON.stringify([completionPct, notSubmittedCount, avgQuizScore, weakTopics]).slice(0, 400);
+                const data = (typeof getDayCachedAI === 'function')
+                    ? await getDayCachedAI(pulseKey, () => safeApiCall('/api/ai', pulsePayload))
+                    : await safeApiCall('/api/ai', pulsePayload);
                 if (data && data.recommendation) {
                     pulseEl.innerHTML = `<div style="font-size:13px;font-weight:600;color:#C4B5FD;">🤖 ${_i18n_t('teacher.aiRecommendation','AI Recommendation:')}</div><div style="font-size:13px;line-height:1.6;margin-top:4px;">${data.recommendation}</div>`;
                 } else {

@@ -901,6 +901,100 @@ function sanitizeServerMessage(msg, maxLen) {
 }
 
 async function safeApiCall(endpoint, payload) {
+    // One request per action: same endpoint + same payload while a request is
+    // still in flight → share the pending promise (rapid re-clicks, double
+    // Enter presses, or handlers registered twice never fan out upstream).
+    // Cap mode: after a `daily_limit` response, stop sending AI requests for
+    // the rest of the session (simple in-memory flag, reset on reload) and
+    // serve day-cached results where they exist — no more quota is spent.
+    if (_aiDailyCapHit && /\/api\/ai/.test(String(endpoint || ''))) {
+        throw _aiCodedError('daily_limit', aiErrorTextFor('daily_limit', ''));
+    }
+    let key = '';
+    try {
+        key = String(endpoint) + '|' + JSON.stringify(payload || {}).slice(0, 4000);
+    } catch (e) { key = String(endpoint) + '|' + Date.now() + Math.random(); }
+    if (_aiInflight.has(key)) return _aiInflight.get(key);
+    const p = _safeApiCallInner(endpoint, payload).finally(() => {
+        if (_aiInflight.get(key) === p) _aiInflight.delete(key);
+    });
+    _aiInflight.set(key, p);
+    return p;
+}
+
+// In-memory AI session state: pending shared requests + daily-cap cooldown.
+const _aiInflight = new Map();
+let _aiDailyCapHit = false;
+
+function _aiCodedError(code, message) {
+    const err = new Error(message);
+    if (code) err.code = code;
+    return err;
+}
+
+// Accurate user messages for the /api/ai error contract, via t() with
+// English defaults (other languages fall back to English until translated —
+// flagged in the loop report). Contract codes with fixed canonical text use
+// the translation; codes whose server message carries the specific cause
+// (account_issue data-policy steps, bad_response feature detail) prefer the
+// server message so the exact fix is never hidden behind a generic string.
+function aiErrorTextFor(code, serverMessage) {
+    const tt = (typeof t === 'function') ? t : ((k, d) => d);
+    const srv = (serverMessage === null || serverMessage === undefined) ? '' : String(serverMessage).trim();
+    switch (code) {
+        case 'daily_limit':
+            return tt('ai.err_daily_limit', "The AI's free daily limit has been reached. It resets daily — please try again later.");
+        case 'rate_limited':
+            return tt('ai.err_rate_limited', 'The AI is busy. Try again in a minute.');
+        case 'timeout':
+            return tt('ai.err_timeout', 'The AI request timed out. Please try again.');
+        case 'model_unavailable':
+            return tt('ai.err_model_unavailable', 'The configured AI model is currently unavailable. Please try again in a bit.');
+        case 'not_configured':
+            return tt('ai.err_not_configured', 'AI server has no API key configured. ') + aiSetupHint();
+        case 'account_issue':
+        case 'bad_response':
+        case 'upstream_error':
+            if (srv) return srv;
+            if (code === 'account_issue') return tt('ai.err_account_issue', 'The AI service has an account issue. Please tell your admin.');
+            if (code === 'bad_response') return tt('ai.err_bad_response', 'The AI returned an unexpected format. Please try again.');
+            return tt('ai.err_upstream', 'The AI service had a problem. Please try again.');
+        default:
+            return srv || tt('ai.err_upstream', 'AI service error. Please try again.');
+    }
+}
+
+// Day-cache for automatic (no-click) AI widgets: stores {date, data} in
+// localStorage under one key namespace. A hit never touches the network, so
+// dashboard loads cost at most one AI request per day per widget instead of
+// one per page view. Reuses the revisionCache idea (cache real AI output,
+// serve it while fresh) without any new dependency.
+function _aiDayCacheKey() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _aiDayCacheStore() {
+    try {
+        return JSON.parse(localStorage.getItem('stuvo_ai_daycache') || '{}') || {};
+    } catch (e) { return {}; }
+}
+async function getDayCachedAI(cacheKey, loader) {
+    const store = _aiDayCacheStore();
+    const today = _aiDayCacheKey();
+    const hit = store && store[cacheKey];
+    if (hit && hit.date === today && hit.data !== undefined) return hit.data;
+    const data = await loader();
+    try {
+        const fresh = _aiDayCacheStore();
+        fresh[cacheKey] = { date: today, data };
+        const keys = Object.keys(fresh);
+        if (keys.length > 60) keys.slice(0, keys.length - 60).forEach(k => { delete fresh[k]; });
+        localStorage.setItem('stuvo_ai_daycache', JSON.stringify(fresh));
+    } catch (e) {}
+    return data;
+}
+
+async function _safeApiCallInner(endpoint, payload) {
     // NOTE: an earlier client-side cooldown breaker (fail-fast locally after
     // an HTTP 429) was removed per project decision — every user action now
     // sends its request. Upstream OpenRouter 429s still surface as clear
@@ -950,7 +1044,13 @@ async function safeApiCall(endpoint, payload) {
                 ? `AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON; HTTP ${status}). The server deployment must route ${endpoint} to the API function before any SPA fallback — redeploy with the api/ functions and OPENROUTER_API_KEY set server-side, then retry. A personal browser key is only an optional fallback, not a substitute for the server route.`
                 : `AI endpoint ${endpoint} returned a non-JSON response (HTTP ${status}, content-type: ${sanitizeServerMessage(ct || 'unknown', 80)}). Please try again.`);
         }
-        if (data && typeof data === 'object' && data.error) throw new Error(sanitizeServerMessage(data.error, 280));
+        if (data && typeof data === 'object' && (data.error || data.ok === false)) {
+            const code200 = (data && data.code) || '';
+            if (code200 === 'daily_limit') _aiDailyCapHit = true;
+            const err200 = _aiCodedError(code200, aiErrorTextFor(code200, sanitizeServerMessage((data && (data.message || data.error)) || '', 280)));
+            if (data && typeof data.escalationFlag === 'boolean') err200.escalationFlag = data.escalationFlag;
+            throw err200;
+        }
         return data;
     }
     // If static web server returns 405 Method Not Allowed or 404 Not Found, use client-side direct fallback
@@ -964,14 +1064,30 @@ async function safeApiCall(endpoint, payload) {
     let serverRetryAfter = 0;
     let serverModel = '';
     let serverScope = '';
+    let serverEscalation = undefined;
     try {
         const parsed = JSON.parse(errorText);
-        serverMsg = parsed.error || '';
+        serverMsg = parsed.error || parsed.message || '';
         serverCode = parsed.code || '';
-        if (Number(parsed.retryAfter) > 0) serverRetryAfter = Math.min(Math.floor(Number(parsed.retryAfter)), 600);
+        if (Number(parsed.retryAfterSec) > 0) serverRetryAfter = Math.min(Math.floor(Number(parsed.retryAfterSec)), 600);
+        else if (Number(parsed.retryAfter) > 0) serverRetryAfter = Math.min(Math.floor(Number(parsed.retryAfter)), 600);
         serverModel = parsed.model || '';
         serverScope = parsed.scope || '';
+        if (typeof parsed.escalationFlag === 'boolean') serverEscalation = parsed.escalationFlag;
     } catch (e) { serverMsg = errorText; }
+    // Legacy server marker → contract code.
+    if (serverCode === 'UPSTREAM_RATE_LIMIT') serverCode = 'rate_limited';
+    // Older servers may send the daily-cap message without the code: detect
+    // it from the real upstream phrasing so cap mode still engages.
+    if (!serverCode && status === 429 && /dail|per-day|per day|day.*quota|quota.*day|free.*tier.*limit/i.test(serverMsg || '')) {
+        serverCode = 'daily_limit';
+    }
+    const codedThrow = (code, message) => {
+        const err = _aiCodedError(code || serverCode || '', message);
+        if (serverEscalation !== undefined) err.escalationFlag = serverEscalation;
+        if (Number(serverRetryAfter) > 0) err.retryAfterSec = serverRetryAfter;
+        throw err;
+    };
     // Honor a Retry-After response header when the JSON body carries none.
     if (!serverRetryAfter) {
         try {
@@ -995,33 +1111,39 @@ async function safeApiCall(endpoint, payload) {
         return await handleClientFallback(endpoint, payload);
     }
     if (missingServerKey) {
-        throw new Error('AI server has no API key configured. ' + aiSetupHint());
+        throw _aiCodedError('not_configured', aiErrorTextFor('not_configured', ''));
     }
     if (isHtmlError) {
         throw new Error(`AI endpoint ${endpoint} is not served by the backend (got HTML, not JSON; HTTP ${status}). The server deployment must route ${endpoint} to the API function before any SPA fallback — redeploy with the api/ functions and OPENROUTER_API_KEY set server-side, then retry.`);
     }
     if (status === 429) {
-        // Distinguish OUR application limiter from UPSTREAM limits — and
-        // upstream OpenRouter platform limits from provider limits (scope).
-        // They need different user actions. No automatic retry or key
-        // fallback here (that would add load while throttled); the user
-        // retries once after the indicated wait. NOTE: the former local
-        // cooldown breaker was removed — every user action now sends its
-        // request; throttling is enforced only by the server/upstream.
+        // Contract codes first: daily_limit engages session cap mode (no more
+        // AI requests are sent; the user retries tomorrow). Everything else
+        // is a transient throttle — the user retries once after the wait.
+        // No automatic retry or key fallback here (that would add load while
+        // throttled). NOTE: the former local cooldown breaker was removed —
+        // every user action still sends its request; throttling is enforced
+        // only by the server/upstream, plus cap mode above for daily caps.
         const waitSecs = serverRetryAfter > 0 ? serverRetryAfter : 60;
+        if (serverCode === 'daily_limit') {
+            _aiDailyCapHit = true;
+            throw codedThrow('daily_limit', aiErrorTextFor('daily_limit', serverMsg));
+        }
         const isAppLimit = serverCode === 'APP_RATE_LIMIT'
             || (!serverCode && /too many requests/i.test(serverMsg || '') && !/openrouter|provider/i.test(serverMsg || ''));
         if (isAppLimit) {
-            throw new Error(`You're sending requests too quickly (application limit, HTTP 429 for ${endpoint}). Please wait about ${waitSecs}s and try again — no need to resend repeatedly.`);
+            throw codedThrow('', `You're sending requests too quickly (application limit, HTTP 429 for ${endpoint}). Please wait about ${waitSecs}s and try again — no need to resend repeatedly.`);
         }
-        if (serverScope === 'platform') {
-            throw new Error(`The AI service is rate-limited right now (platform limit, HTTP 429 for ${endpoint}). Please wait about ${waitSecs}s and retry once — your message is safe.`);
+        if (serverCode === 'rate_limited' || serverCode === '' || serverScope === 'platform') {
+            throw codedThrow('rate_limited', aiErrorTextFor('rate_limited', ''));
         }
         const modelBit = serverModel ? ` (provider limit, model ${sanitizeServerMessage(serverModel, 80)})` : '';
-        throw new Error(`The AI provider is rate-limited right now (HTTP 429 for ${endpoint}${modelBit}). Please wait about ${waitSecs}s and retry once — your message is safe.`);
+        throw codedThrow('rate_limited', `The AI provider is rate-limited right now (HTTP 429 for ${endpoint}${modelBit}). Please wait about ${waitSecs}s and retry once — your message is safe.`);
     }
     const clean = sanitizeServerMessage(serverMsg, 280);
-    throw new Error(clean ? `AI service error for ${endpoint} (HTTP ${status}): ${clean}` : `AI service error for ${endpoint} (HTTP ${status}). Please try again.`);
+    throw codedThrow('', aiErrorTextFor(serverCode, clean
+        ? (serverCode ? clean : `AI service error for ${endpoint} (HTTP ${status}): ${clean}`)
+        : `AI service error for ${endpoint} (HTTP ${status}). Please try again.`));
 }
 
 async function handleClientFallback(endpoint, payload = {}) {
@@ -1103,7 +1225,9 @@ async function handleClientFallback(endpoint, payload = {}) {
         const raw = await callDirectOpenRouter(prompt);
         const parsed = strictJSON(raw, 'Question generator');
         if (!parsed.question || !parsed.correctAnswer) {
-            throw new Error('No question returned. Please try again.');
+            // Known cause (malformed model output) → accurate bad_response
+            // message, never the generic "No question returned" line.
+            throw _aiCodedError('bad_response', aiErrorTextFor('bad_response', 'The question generator returned an incomplete question. Please try again.'));
         }
         return {
             subject: s,

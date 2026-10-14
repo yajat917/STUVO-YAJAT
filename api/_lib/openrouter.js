@@ -28,9 +28,11 @@ function getApiKey() {
 // Auto-initialize key into environment
 getApiKey();
 
-// Model policy (verified against the live OpenRouter catalog: every ID
-// below is currently LISTED with text->text chat support for temperature /
-// max_tokens / system messages as sent by callOpenRouter).
+// Model policy: IDs live in ONE place and are env-overridable so a
+// withdrawn free model can be swapped without a code change:
+//   OPENROUTER_MODEL (primary), OPENROUTER_FALLBACK_MODEL (single fallback).
+// Defaults below were verified against the live OpenRouter catalog (text->text
+// chat support for temperature / max_tokens / system messages as sent below).
 // Primary: google/gemma-4-31b-it:free. Single fallback:
 // google/gemma-4-26b-a4b-it:free (same instruct family, standard string
 // `content` responses).
@@ -42,10 +44,17 @@ getApiKey();
 // not a request-shape bug — the parser already handles the documented
 // string/array content schema correctly. Do not re-add it without live
 // verification that it returns non-empty `content` consistently.
-const MODELS = [
-  "google/gemma-4-31b-it:free",
-  "google/gemma-4-26b-a4b-it:free"
-];
+const DEFAULT_PRIMARY_MODEL = "google/gemma-4-31b-it:free";
+const DEFAULT_FALLBACK_MODEL = "google/gemma-4-26b-a4b-it:free";
+// Resolved per request (not once at module load) so a rotated env var takes
+// effect without a redeploy-restart on long-lived hosts, and so the loop
+// checklist item "bogus model id → model_unavailable" exercises the real path.
+function getModels() {
+  const primary = (process.env.OPENROUTER_MODEL || "").trim() || DEFAULT_PRIMARY_MODEL;
+  const fallback = (process.env.OPENROUTER_FALLBACK_MODEL || "").trim() || DEFAULT_FALLBACK_MODEL;
+  return primary === fallback ? [primary] : [primary, fallback];
+}
+const MODELS = getModels();
 
 const REQUEST_TIMEOUT_MS = 20000;
 
@@ -162,6 +171,57 @@ function isAuthErrorMessage(msg) {
   return /401|403|rejected the API key|invalid.*key|unauthorized|forbidden|402|payment|credits/i.test(m);
 }
 
+// ─── Structured failure codes (api/ai.js error contract) ────────
+// Every throw from callOpenRouter carries a machine-readable `code` so the
+// client can render the accurate user message instead of a generic one.
+// Codes: daily_limit, rate_limited, model_unavailable, account_issue,
+// bad_response, timeout, not_configured, upstream_error.
+// Classification uses the REAL upstream status + error text (not invented
+// matching): daily-cap detection keys off OpenRouter's documented free-tier
+// phrasing ("daily", "per-day", "day quota") on HTTP 429 bodies.
+function isDailyCapMessage(errText, info) {
+  const hay = String((info && info.message) || '') + ' ' + String(errText || '');
+  return /dail|per-day|per day|day.*quota|quota.*day|free-models-per-day|free.*tier.*limit/i.test(hay);
+}
+function isModelNotFoundMessage(errText, info, status) {
+  if (status === 404) return true;
+  const hay = String((info && info.message) || '') + ' ' + String(errText || '');
+  return /no endpoints? found|model .*not (found|available)|unknown model|invalid model|data policy/i.test(hay);
+}
+function isDataPolicyMessage(errText, info) {
+  const hay = String((info && info.message) || '') + ' ' + String(errText || '');
+  return /data policy/i.test(hay);
+}
+// Classify a non-OK upstream response into the error contract. Returns
+// { code, httpStatus, message } with user-safe text (capped, no key material
+// — callers must pass only the body text, never headers).
+function classifyUpstreamFailure(status, errText) {
+  const info = parseUpstreamErrorBody(errText);
+  const capped = upstreamPreview(errText).slice(0, 300);
+  if (status === 401 || status === 403) {
+    if (isDataPolicyMessage(errText, info)) {
+      return { code: 'account_issue', httpStatus: status, message: 'The AI provider blocked this request because of the account data-policy setting. In the OpenRouter dashboard, go to Settings → Privacy and allow free-model endpoints, then try again.' };
+    }
+    return { code: 'account_issue', httpStatus: status, message: 'OpenRouter rejected the API key (HTTP ' + status + '). Ask the admin to check OPENROUTER_API_KEY.' };
+  }
+  if (status === 402) {
+    return { code: 'account_issue', httpStatus: 402, message: 'OpenRouter credits are exhausted (HTTP 402). Free models need a non-negative balance — top up or wait, then try again.' };
+  }
+  if (status === 429) {
+    if (isDailyCapMessage(errText, info)) {
+      return { code: 'daily_limit', httpStatus: 429, message: "The AI's free daily limit has been reached. It resets daily — please try again later." };
+    }
+    return { code: 'rate_limited', httpStatus: 429, message: 'The AI is busy. Try again in a minute.' };
+  }
+  if (isModelNotFoundMessage(errText, info, status)) {
+    if (isDataPolicyMessage(errText, info)) {
+      return { code: 'account_issue', httpStatus: 502, message: 'The AI provider found no endpoint for this request because of the account data-policy setting. In the OpenRouter dashboard, go to Settings → Privacy and allow free-model endpoints, then try again.' };
+    }
+    return { code: 'model_unavailable', httpStatus: 502, message: 'The configured AI model is currently unavailable. Please try again in a bit.' };
+  }
+  return { code: 'upstream_error', httpStatus: 502, message: 'OpenRouter error (' + status + '): ' + capped };
+}
+
 // Some providers return message.content as an array of content parts
 // ([{type:'text', text:'...'}]) instead of a plain string. Normalize to text
 // so such responses aren't misclassified as empty.
@@ -180,19 +240,25 @@ function normalizeContent(content) {
   return content;
 }
 
-async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedModels = null) {
+async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = null) {
   const corrId = newCorrelationId();
   const apiKey = getApiKey();
   if (!apiKey) {
-    const e = new Error("OPENROUTER_API_KEY environment variable is not set.");
+    const e = new Error('OPENROUTER_API_KEY environment variable is not set. Add it in Vercel → Settings → Environment Variables (Production + Preview) and redeploy.');
     e.status = 500;
+    e.code = 'not_configured';
     throw e;
   }
 
+  // Single source of truth for model ids (env-overridable, resolved fresh
+  // per request). An explicit per-call model still wins when it is in the
+  // configured set; anything else falls back to the primary (this also keeps
+  // stale hardcoded ids from old code paths from ever reaching upstream).
+  const CONFIGURED = getModels();
+  const DEFAULT_MODEL = CONFIGURED[0];
   let messages;
-  let selectedModel = typeof model === 'object' && model !== null ? (model.model || MODELS[0]) : model;
-  // Guard against stale/invalid model ids persisted in old code paths.
-  if (!MODELS.includes(selectedModel)) selectedModel = MODELS[0];
+  let selectedModel = typeof model === 'object' && model !== null ? (model.model || DEFAULT_MODEL) : (model || DEFAULT_MODEL);
+  if (!CONFIGURED.includes(selectedModel)) selectedModel = DEFAULT_MODEL;
   let max_tokens = 1000;
   let temperature = 0.7;
 
@@ -219,6 +285,13 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
   // load, keeps a single request inside the serverless time budget, and
   // guarantees a model that already failed for this request is never tried
   // twice below.
+  // NOTE (quota-loop item 1): the request below ALSO sends OpenRouter's
+  // request-level `models` array ([primary, fallback]) so the gateway can
+  // fall through server-side in ONE request from our side. Whether that
+  // fall-through counts as extra activity could NOT be verified here (no key
+  // in this environment — see triage report), so the single local fallback
+  // is retained until one real call confirms the `models` array is honored;
+  // then the local retry loop goes away entirely.
   const MAX_FALLBACKS_PER_REQUEST = 1;
   const triedModels = Array.isArray(_triedModels) ? _triedModels : [];
   const canRetry = attempt < MAX_FALLBACKS_PER_REQUEST;
@@ -228,13 +301,16 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     // model is exhausted (caller then returns a retry-later JSON error
     // instead of looping).
     const seen = new Set([...triedModels, selectedModel]);
-    return MODELS.find(m => !seen.has(m)) || null;
+    return CONFIGURED.find(m => !seen.has(m)) || null;
   }
-  const nextModelFor = () => pickFallbackModel() || MODELS[attempt + 1];
+  const nextModelFor = () => pickFallbackModel() || CONFIGURED[attempt + 1];
   const withNextModel = () => {
-    const nm = pickFallbackModel() || MODELS[attempt + 1] || selectedModel;
+    const nm = pickFallbackModel() || CONFIGURED[attempt + 1] || selectedModel;
     return typeof model === 'object' && model !== null ? { ...model, model: nm } : nm;
   };
+  // Server-side fall-through list for this request: configured models minus
+  // any already tried (never resend a model that already failed upstream).
+  const serverFallbackModels = () => CONFIGURED.filter(m => ![...triedModels, selectedModel].includes(m));
 
   let response;
   try {
@@ -251,6 +327,9 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
         },
         body: JSON.stringify({
           model: selectedModel,
+          // Request-level fallbacks: OpenRouter falls through this list
+          // server-side on rate limit / downtime in ONE request from us.
+          models: [selectedModel, ...serverFallbackModels()].filter((m, i, a) => a.indexOf(m) === i),
           messages: messages,
           max_tokens: max_tokens,
           temperature: temperature
@@ -265,6 +344,8 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     if (err && err.name === 'AbortError') {
       const e = new Error(`OpenRouter request timed out after ${REQUEST_TIMEOUT_MS / 1000}s (model ${selectedModel}). Please try again.`);
       e.status = 504;
+      e.code = 'timeout';
+      attachUpstreamContext(e, triedModels, selectedModel, corrId);
       if (canRetry) {
         console.warn(`[${corrId}] Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
         return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
@@ -284,15 +365,26 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     const upInfo = response.status === 429 ? parseUpstreamErrorBody(errText) : null;
     const scopeBit = upInfo ? ` scope=${rateLimitScope(upInfo)}${upInfo.errorType ? ` type=${upInfo.errorType}` : ''}` : '';
     console.warn(`[${corrId}] Model ${selectedModel} returned HTTP ${response.status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}${scopeBit}: ${upstreamPreview(errText)}`);
+    // Structured classification FIRST so every failure below carries the
+    // contract code even when it also gets a local single-fallback attempt.
+    const classified = classifyUpstreamFailure(response.status, errText);
+    const applyClass = (e) => {
+      e.status = classified.httpStatus;
+      e.code = classified.code;
+      e.model = selectedModel;
+      e.corrId = corrId;
+      e.triedModels = [...triedModels, selectedModel].slice(0, 5);
+      const upInfo2 = parseUpstreamErrorBody(errText);
+      e.scope = rateLimitScope(upInfo2);
+      if (upInfo2.errorType) e.upstreamType = upInfo2.errorType;
+      if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
+      return e;
+    };
     if (response.status === 401 || response.status === 403) {
-      const e = new Error("OpenRouter rejected the API key (HTTP " + response.status + "). Ask the admin to check OPENROUTER_API_KEY.");
-      e.status = 500;
-      throw e; // never retry auth failures across models
+      throw applyClass(new Error(classified.message)); // never retry auth failures across models
     }
     if (response.status === 402) {
-      const e = new Error("OpenRouter quota/credits exhausted (HTTP 402). Try again later.");
-      e.status = 502;
-      throw e;
+      throw applyClass(new Error(classified.message));
     }
     if (isRetryableStatus(response.status) && canRetry) {
       if (response.status === 429) {
@@ -301,8 +393,10 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
         if (!fb) {
           // Every configured model already failed for this request —
           // stop here and tell the user to retry later (never loop).
-          const e = new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
-          attachRateLimitContext(e, errText, retryAfterSecs, tried, selectedModel, corrId);
+          const e = applyClass(new Error(classified.message));
+          // Keep the legacy UPSTREAM_RATE_LIMIT marker too: older clients
+          // key off it to distinguish upstream throttling.
+          e.upstreamType = e.upstreamType || 'rate_limit_exceeded';
           throw e;
         }
         console.log(`[${corrId}] 429 on ${selectedModel}; single fallback to ${fb}...`);
@@ -318,19 +412,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
       console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
-    const e = new Error(response.status === 429
-      ? "OpenRouter rate limit reached (HTTP 429). Wait a minute and try again."
-      : `OpenRouter error (${response.status}): ${upstreamPreview(errText).slice(0, 300)}`);
-    e.status = response.status === 429 ? 429 : 502;
-    if (response.status === 429) {
-      // Coded so api/ai.js and the client can distinguish provider rate
-      // limits from our own application limiter AND OpenRouter platform
-      // limits from upstream provider limits (see rateLimitScope).
-      // `model` is the last model attempted; `triedModels` lists every
-      // model attempted this request.
-      e.code = 'UPSTREAM_RATE_LIMIT';
-      attachRateLimitContext(e, errText, retryAfterSecs, [...triedModels, selectedModel], selectedModel, corrId);
-    }
+    const e = applyClass(new Error(classified.message));
     throw e;
   }
 
@@ -341,6 +423,8 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
   } catch (e) {
     const err = new Error("OpenRouter returned non-JSON response. Please try again.");
     err.status = 502;
+    err.code = 'bad_response';
+    attachUpstreamContext(err, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
@@ -367,23 +451,37 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
           return callOpenRouter(prompt, withNextModel(), attempt + 1, tried);
         }
       }
-      const e = new Error("OpenRouter rate limit reached (HTTP 429). Wait a minute and try again.");
-      attachRateLimitContext(e, JSON.stringify(data.error), retryAfterSecs, [...triedModels, selectedModel], selectedModel, corrId);
+      const bodyText = JSON.stringify(data.error);
+      const cls = isDailyCapMessage(bodyText, bodyInfo)
+        ? { code: 'daily_limit', httpStatus: 429, message: "The AI's free daily limit has been reached. It resets daily — please try again later." }
+        : { code: 'rate_limited', httpStatus: 429, message: 'The AI is busy. Try again in a minute.' };
+      const e = new Error(cls.message);
+      e.status = cls.httpStatus;
+      // attachRateLimitContext fills scope/model/corrId/retryAfter diagnostics
+      // (it also stamps the legacy UPSTREAM_RATE_LIMIT marker, which is kept
+      // for older clients) — then restore the contract code on top.
+      attachRateLimitContext(e, bodyText, retryAfterSecs, [...triedModels, selectedModel], selectedModel, corrId);
+      e.code = cls.code;
       throw e;
     }
     if (!isAuthErrorMessage(msg) && canRetry) {
       console.warn(`[${corrId}] Provider error on ${selectedModel}: ${upstreamPreview(msg)}. Retrying with ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
-    const e = new Error(msg.slice(0, 300));
-    e.status = 502;
+    // Classify the terminal provider error the same way as an HTTP failure
+    // so a 200-with-error-body never surfaces as a generic 502.
+    const termCls = classifyUpstreamFailure(Number((data.error && data.error.code) || 0) || 502, JSON.stringify(data.error));
+    const e = new Error(termCls.code === 'upstream_error' ? msg.slice(0, 300) : termCls.message);
+    e.status = termCls.httpStatus;
+    e.code = termCls.code;
+    attachUpstreamContext(e, triedModels, selectedModel, corrId);
     throw e;
   }
 
   if (!data.choices || !data.choices[0] || !data.choices[0].message) {
     const e = new Error("OpenRouter returned an incomplete response structure (missing choices). Please try again.");
     e.status = 502;
-    e.code = 'UPSTREAM_MALFORMED';
+    e.code = 'bad_response';
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Missing choices/message from ${selectedModel}, retrying with ${nextModelFor()}...`);
@@ -400,7 +498,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     // shapes (e.g. message is a string, not an object) — still malformed.
     const e = new Error("OpenRouter returned an incomplete response structure (missing choices). Please try again.");
     e.status = 502;
-    e.code = 'UPSTREAM_MALFORMED';
+    e.code = 'bad_response';
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     throw e;
@@ -413,7 +511,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     // invent substitute content either — fail visibly with a clear message.
     const e = new Error("The model declined to respond to that request. Please try rephrasing your prompt.");
     e.status = 502;
-    e.code = 'UPSTREAM_REFUSAL';
+    e.code = 'upstream_error'; // refusal: decisive, no fallback; message stays specific
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     throw e;
   }
@@ -425,7 +523,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
     // on free-tier models). One controlled fallback, then an honest error.
     const e = new Error("The AI model returned no content. Please try again.");
     e.status = 502;
-    e.code = 'UPSTREAM_NULL_CONTENT';
+    e.code = 'bad_response';
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Null content from ${selectedModel}, retrying once with ${nextModelFor()}...`);
@@ -444,7 +542,7 @@ async function callOpenRouter(prompt, model = MODELS[0], attempt = 0, _triedMode
         : "The AI model returned an empty response. Please try again."
     );
     e.status = 502;
-    e.code = typeof content !== 'string' ? 'UPSTREAM_MALFORMED' : 'UPSTREAM_EMPTY';
+    e.code = 'bad_response';
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] ${metaLog(meta)} from ${selectedModel}, retrying once with ${nextModelFor()}...`);
@@ -563,4 +661,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, attachUpstreamContext, parseUpstreamErrorBody, rateLimitScope, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, attachUpstreamContext, parseUpstreamErrorBody, rateLimitScope, classifyUpstreamFailure, getModels, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };
