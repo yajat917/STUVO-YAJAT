@@ -280,18 +280,15 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     messages = [{ role: "user", content: fullPrompt }];
   }
 
-  // Controlled fallback: at most ONE fallback attempt per user request
-  // (primary + one fallback = max 2 upstream calls). This bounds provider
-  // load, keeps a single request inside the serverless time budget, and
-  // guarantees a model that already failed for this request is never tried
-  // twice below.
-  // NOTE (quota-loop item 1): the request below ALSO sends OpenRouter's
-  // request-level `models` array ([primary, fallback]) so the gateway can
-  // fall through server-side in ONE request from our side. Whether that
-  // fall-through counts as extra activity could NOT be verified here (no key
-  // in this environment — see triage report), so the single local fallback
-  // is retained until one real call confirms the `models` array is honored;
-  // then the local retry loop goes away entirely.
+  // Controlled fallback: at most ONE fallback attempt per user request, and
+  // ONLY for non-throttle failures (5xx, transport errors, malformed/empty
+  // bodies). HTTP 429 / 429-in-body NEVER retries locally — the request
+  // already carried `models: [primary, fallback]` for server-side
+  // fall-through, and a second request into a throttle burns quota and
+  // almost certainly 429s again on the same key. Throttle backoff belongs to
+  // the client (Retry-After display + daily cap mode), not to this function.
+  // This bounds provider load and keeps a single request inside the
+  // serverless time budget (no blocking sleep on the 429 path anymore).
   const MAX_FALLBACKS_PER_REQUEST = 1;
   const triedModels = Array.isArray(_triedModels) ? _triedModels : [];
   const canRetry = attempt < MAX_FALLBACKS_PER_REQUEST;
@@ -386,29 +383,19 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     if (response.status === 402) {
       throw applyClass(new Error(classified.message));
     }
+    if (response.status === 429) {
+      // Throttled: NEVER send a second upstream request for this user action.
+      // The request already carried `models: [primary, fallback]`, so the
+      // gateway had its server-side fall-through chance inside that single
+      // request; firing another one seconds later on the same key almost
+      // certainly 429s again and burns scarce quota. Fail fast with the
+      // classified error + Retry-After — the CLIENT owns the wait (cap mode /
+      // "about N seconds"), which is where backoff actually helps.
+      const e = applyClass(new Error(classified.message));
+      e.upstreamType = e.upstreamType || 'rate_limit_exceeded';
+      throw e;
+    }
     if (isRetryableStatus(response.status) && canRetry) {
-      if (response.status === 429) {
-        const tried = [...triedModels, selectedModel];
-        const fb = pickFallbackModel();
-        if (!fb) {
-          // Every configured model already failed for this request —
-          // stop here and tell the user to retry later (never loop).
-          const e = applyClass(new Error(classified.message));
-          // Keep the legacy UPSTREAM_RATE_LIMIT marker too: older clients
-          // key off it to distinguish upstream throttling.
-          e.upstreamType = e.upstreamType || 'rate_limit_exceeded';
-          throw e;
-        }
-        console.log(`[${corrId}] 429 on ${selectedModel}; single fallback to ${fb}...`);
-        // Respect legitimate Retry-After when provided, bounded so a single
-        // user request can never stall a serverless function: at most 5s here.
-        // The full value is still propagated to the client (e.retryAfter),
-        // which is where the real wait happens — the user retries after that
-        // delay. No tight-loop retries: one fallback attempt per request max.
-        const waitSecs = retryAfterSecs > 0 ? Math.min(retryAfterSecs, 5) : (attempt + 1);
-        await new Promise(r => setTimeout(r, waitSecs * 1000));
-        return callOpenRouter(prompt, withNextModel(), attempt + 1, tried);
-      }
       console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
       return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
     }
@@ -440,17 +427,9 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     const bodyInfo = parseUpstreamErrorBody(JSON.stringify(data));
     const isRateLimitBody = Number(data.error && data.error.code) === 429 || bodyInfo.errorType === 'rate_limit_exceeded';
     if (isRateLimitBody) {
+      // Same no-second-request rule as HTTP 429 above: the gateway already
+      // had its fall-through chance via the `models` array in this request.
       const retryAfterSecs = parseRetryAfterSecs(response.headers);
-      if (canRetry) {
-        const tried = [...triedModels, selectedModel];
-        const fb = pickFallbackModel();
-        if (fb) {
-          console.log(`[${corrId}] 429-in-200-body on ${selectedModel} (scope=${rateLimitScope(bodyInfo)}); single fallback to ${fb}...`);
-          const waitSecs = retryAfterSecs > 0 ? Math.min(retryAfterSecs, 5) : (attempt + 1);
-          await new Promise(r => setTimeout(r, waitSecs * 1000));
-          return callOpenRouter(prompt, withNextModel(), attempt + 1, tried);
-        }
-      }
       const bodyText = JSON.stringify(data.error);
       const cls = isDailyCapMessage(bodyText, bodyInfo)
         ? { code: 'daily_limit', httpStatus: 429, message: "The AI's free daily limit has been reached. It resets daily — please try again later." }

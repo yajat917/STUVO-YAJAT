@@ -198,22 +198,48 @@ async function expectCall(name, stubs, fn, check) {
   }
 
   // 14. api/ai.js contract: daily_limit → { ok:false, code, message, retryAfterSec } + 429
+  // Throttle path sends EXACTLY ONE upstream request (no local fallback into
+  // a throttle) and fails fast (no blocking sleep).
   {
     const res = mockRes();
-    // Normal path: primary 429 → one local fallback 429 → contract error.
     stubQueue = [
       resp({ status: 429, json: { error: { code: 429, message: 'free-models-per-day exhausted', metadata: {} } }, headers: { 'retry-after': '30' } }),
-      resp({ status: 429, json: { error: { code: 429, message: 'free-models-per-day exhausted', metadata: {} } }, headers: { 'retry-after': '30' } }),
     ];
+    seenRequests.length = 0;
+    const t0 = Date.now();
     await aiHandler({ method: 'POST', body: { action: 'doubt', question: '2+2?' } }, res);
+    const elapsed = Date.now() - t0;
     assert.strictEqual(res.statusCode, 429);
     assert.strictEqual(res.data.ok, false);
     assert.strictEqual(res.data.code, 'daily_limit');
     assert(/daily/i.test(res.data.message));
     assert.strictEqual(res.data.retryAfterSec, 30);
+    assert.strictEqual(seenRequests.length, 1, 'exactly one upstream request on throttle path');
+    assert(elapsed < 3000, 'fails fast without blocking sleep, took ' + elapsed + 'ms');
     assert(!JSON.stringify(res.data).includes('sk-or-v1-test'), 'no key material in payload');
     passed++;
-    console.log('ok - /api/ai contract for daily_limit (429, ok:false, retryAfterSec)');
+    console.log('ok - /api/ai contract for daily_limit (429, ok:false, retryAfterSec, 1 upstream call)');
+  }
+
+  // 14b. Non-daily HTTP 429 with fallback still available → immediate
+  // rate_limited, exactly 1 upstream fetch, no sleep.
+  {
+    stubQueue = [
+      resp({ status: 429, json: { error: { code: 429, message: 'Rate limit exceeded, try again in a bit', metadata: {} } }, headers: { 'retry-after': '20' } }),
+    ];
+    seenRequests.length = 0;
+    const t0 = Date.now();
+    try {
+      await or.callOpenRouter('hi'); // fallback model available, must NOT be used
+      assert.fail('should throw');
+    } catch (e) {
+      assert.strictEqual(e.code, 'rate_limited');
+      assert.strictEqual(e.retryAfter, 20);
+    }
+    assert.strictEqual(seenRequests.length, 1, 'no local retry into a throttle');
+    assert(Date.now() - t0 < 3000, 'no blocking sleep on 429 path');
+    passed++;
+    console.log('ok - HTTP 429 → single upstream request, immediate rate_limited');
   }
 
   // 15. Wellbeing: AI fails on crisis message → error still carries escalationFlag
