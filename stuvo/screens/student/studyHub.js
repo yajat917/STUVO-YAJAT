@@ -215,7 +215,9 @@ if (typeof redistributeAfterMiss !== 'function') {
         var missed = dailyPlan.filter(function (d) { return d.date < today && !d.completed; });
         var future = dailyPlan.filter(function (d) { return d.date >= today; });
         if (missed.length === 0 || future.length === 0) return dailyPlan;
-        var futureClone = future.map(function (d) { return Object.assign({}, d, { extraSubjects: d.extraSubjects ? [].concat(d.extraSubjects) : undefined }); });
+        // Same Firestore-safety rule as lib/subjectTaxonomy.js: never leave
+        // `extraSubjects: undefined` on a clone (Write-channel HTTP 400).
+        var futureClone = future.map(function (d) { var c = Object.assign({}, d); if (c.extraSubjects === undefined) delete c.extraSubjects; else c.extraSubjects = [].concat(c.extraSubjects); return c; });
         missed.forEach(function (m, i) { var ti = i % futureClone.length; if (!futureClone[ti].extraSubjects) futureClone[ti].extraSubjects = []; futureClone[ti].extraSubjects.push(m.subject); });
         return [].concat(dailyPlan.filter(function (d) { return d.date < today; }), futureClone);
     };
@@ -1206,6 +1208,8 @@ function bindToday(container, ctx) {
         if (b2) b2.textContent = WORK / 60 + '/' + BREAK_TIME / 60 + ' min';
         updateFocusDisplay();
     }
+    try { if (window._shFocusLangHandler) window.removeEventListener('languageChanged', window._shFocusLangHandler); } catch (e) {}
+    try { window._shFocusLangHandler = refreshFocusDurations; } catch (e) {}
     window.addEventListener('languageChanged', refreshFocusDurations);
     const _origApply = window.applyAccessibilityPrefs;
     if (_origApply && !_origApply._focusWrapped) {

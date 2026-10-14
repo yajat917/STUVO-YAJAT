@@ -66,8 +66,12 @@ function redistributeAfterMiss(dailyPlan, todayStr) {
   var missed = dailyPlan.filter(function(d) { return d.date < today && !d.completed; });
   var future = dailyPlan.filter(function(d) { return d.date >= today; });
   if (missed.length === 0 || future.length === 0) return dailyPlan;
-  // Deep clone future to avoid mutating original refs unexpectedly
-  var futureClone = future.map(function(d) { return Object.assign({}, d, { extraSubjects: d.extraSubjects ? [].concat(d.extraSubjects) : undefined }); });
+  // Deep clone future to avoid mutating original refs unexpectedly.
+  // NOTE: never leave `extraSubjects: undefined` on a clone — Firestore
+  // rejects `undefined` field values (Write-channel HTTP 400), including
+  // inside array elements. Omit the key instead (reads treat absent and
+  // undefined identically).
+  var futureClone = future.map(function(d) { var c = Object.assign({}, d); if (c.extraSubjects === undefined) delete c.extraSubjects; else c.extraSubjects = [].concat(c.extraSubjects); return c; });
   missed.forEach(function(missedDay, i) {
     var targetIndex = i % futureClone.length;
     if (!futureClone[targetIndex].extraSubjects) futureClone[targetIndex].extraSubjects = [];

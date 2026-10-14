@@ -222,10 +222,18 @@ async function renderTeacherTestReports(container) {
             if (max <= 0) { showToast(_i18n_t('teacher.enterMaxMarks','Enter a valid max marks value.'), 'error'); return; }
 
             const entries = [];
+            const invalidNames = [];
             roster.forEach(s => {
                 const v = String(marks[s.id] ?? '').trim();
-                if (v !== '') entries.push({ studentId: s.id, studentName: s.name, marks: Number(v) });
+                if (v === '') return;
+                const m = Number(v);
+                // Firestore rejects NaN (Write-channel HTTP 400), and a NaN
+                // grade would corrupt the report — reject non-numeric or
+                // negative input up front instead of publishing bad data.
+                if (!isFinite(m) || m < 0) invalidNames.push(s.name);
+                else entries.push({ studentId: s.id, studentName: s.name, marks: m });
             });
+            if (invalidNames.length) { showToast('Invalid marks for: ' + invalidNames.join(', ') + '. Enter numbers 0 or greater.', 'error'); return; }
             if (entries.length === 0) { showToast(_i18n_t('teacher.enterMarks','Enter at least one student mark.'), 'error'); return; }
 
             const btn = container.querySelector('#btn-add-report');

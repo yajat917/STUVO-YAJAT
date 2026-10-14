@@ -157,13 +157,14 @@ function openModal(title, bodyHTML, onSubmit = null) {
     const close = () => {
         if (closed) return;
         closed = true;
+        document.removeEventListener('keydown', onKey);
         if (reduceMotion) { overlay.remove(); return; }
         overlay.dataset.closing = 'true';
         window.setTimeout(() => overlay.remove(), 160);
     };
     overlay.querySelector('#modal-close-btn').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
-    const onKey = e => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } };
+    const onKey = e => { if (e.key === 'Escape') close(); };
     document.addEventListener('keydown', onKey);
 
     if (onSubmit) {
@@ -1283,11 +1284,11 @@ function openAiKeySettings() {
         setStatus('dim', 'Removed. App uses the shared server key.');
         try { if (typeof showToast === 'function') showToast('Personal AI key removed', 'info'); } catch (e) {}
     });
-    const close = () => overlay.remove();
+    const close = () => { document.removeEventListener('keydown', esc); overlay.remove(); };
     overlay.querySelector('#ai-key-close').addEventListener('click', close);
     overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
     document.addEventListener('keydown', function esc(e) {
-        if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
+        if (e.key === 'Escape') close();
     });
     setTimeout(() => { try { input.focus(); } catch (e) {} }, 50);
 }
@@ -1817,8 +1818,15 @@ function renderGlobalSearchResults(grouped, rawQuery, container) {
             else if (type === 'announcements') route = _getAnnouncementRoute();
             else if (type === 'revisions') route = _getRevisionRoute();
             if (route) {
+                // Assigning a different hash already triggers handleRoute via
+                // the hashchange event — calling it manually too would render
+                // (and re-fire boot-auto AI) twice. Only render manually when
+                // the hash is unchanged (no event fires for same-hash sets).
+                const before = window.location.hash;
                 window.location.hash = route;
-                if (typeof handleRoute === 'function') setTimeout(() => { try { handleRoute(); } catch(e){} }, 50);
+                if (before === window.location.hash && typeof handleRoute === 'function') {
+                    try { handleRoute(); } catch(e){}
+                }
             }
         };
         el.addEventListener('click', go);

@@ -241,6 +241,10 @@ async function handleRoute() {
     if (appState.userData && appState.userData.officialName) window.currentUserName = appState.userData.officialName;
     // Sync language from Firestore profile — but never clobber a newer local
     // choice mid-switch, and reload translations only when it actually changed.
+    // When a reload is needed, wait for it and render once afterwards instead
+    // of rendering immediately AND again on completion: the immediate render
+    // would fire every boot-auto AI request twice (dashboard/study-hub).
+    // .finally always runs, so the deferred render is guaranteed.
     if (appState.userData && appState.userData.languagePreference
         && appState.userData.languagePreference !== window.currentUserLanguage
         && !window._langSwitching) {
@@ -250,6 +254,7 @@ async function handleRoute() {
             loadLanguage(appState.userData.languagePreference)
                 .catch(()=>{})
                 .finally(()=>{ window._langLoading = false; try { handleRoute(); } catch {} });
+            return;
         }
     }
 
@@ -589,7 +594,13 @@ onAuthStateChanged(auth, async (user) => {
             const cached = (typeof getCachedLang === 'function' ? getCachedLang() : null) || 'en';
             if (langPref && typeof loadLanguage === 'function') {
                 window.currentUserLanguage = langPref;
-                loadLanguage(langPref).then(()=>{ try{handleRoute();}catch{} }).catch(()=>{});
+                // Render once after the language resolves (success OR failure)
+                // instead of rendering immediately AND again on completion,
+                // which would fire every boot-auto AI request twice per login.
+                window._postAuthRenderPending = true;
+                loadLanguage(langPref).then(
+                    ()=>{ window._postAuthRenderPending = false; try{handleRoute();}catch{} },
+                    ()=>{ window._postAuthRenderPending = false; try{handleRoute();}catch{} });
             } else if (langPref) {
                 window.currentUserLanguage = langPref;
             } else {
@@ -613,7 +624,9 @@ onAuthStateChanged(auth, async (user) => {
             else if (appState.userData && appState.userData.accessibilityPrefs) window._notificationPrefs = appState.userData.accessibilityPrefs;
         } catch(e){}
         authReady = true;
-        handleRoute();
+        // Skipped when a post-language render is already scheduled above —
+        // rendering here too would duplicate every boot-auto AI request.
+        if (!window._postAuthRenderPending) handleRoute();
     } else {
         appState.user = null;
         appState.role = null;
