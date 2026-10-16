@@ -49,9 +49,16 @@ const DEFAULT_FALLBACK_MODEL = "google/gemma-4-26b-a4b-it:free";
 // Resolved per request (not once at module load) so a rotated env var takes
 // effect without a redeploy-restart on long-lived hosts, and so the loop
 // checklist item "bogus model id → model_unavailable" exercises the real path.
+function modelVendor(id) {
+  return String(id || '').split('/')[0].toLowerCase();
+}
 function getModels() {
   const primary = (process.env.OPENROUTER_MODEL || "").trim() || DEFAULT_PRIMARY_MODEL;
   const fallback = (process.env.OPENROUTER_FALLBACK_MODEL || "").trim() || DEFAULT_FALLBACK_MODEL;
+  // Vendor-diversity rule: the fallback must never be from the same vendor as
+  // the primary, or a family-wide throttle (like the Gemma 429s) fails over
+  // to the same outage. Loud warning so a bad config is caught in server logs.
+  if (fallback !== primary && modelVendor(fallback) === modelVendor(primary)) console.warn(`[AI-CONFIG] Fallback model ${fallback} shares vendor ${modelVendor(primary)} with primary ${primary} — same-vendor failover gives no redundancy. Set OPENROUTER_FALLBACK_MODEL to a different vendor.`);
   return primary === fallback ? [primary] : [primary, fallback];
 }
 const MODELS = getModels();
@@ -126,42 +133,81 @@ function parseUpstreamErrorBody(errText) {
   try {
     const parsed = JSON.parse(errText);
     const e = parsed && parsed.error;
-    if (!e || typeof e !== 'object') return { code: 0, errorType: '', providerCode: '', message: '' };
+    if (!e || typeof e !== 'object') return { code: 0, errorType: '', providerCode: '', providerName: '', message: '' };
     const md = e.metadata && typeof e.metadata === 'object' ? e.metadata : {};
     const pick = (...vals) => { for (const v of vals) if (typeof v === 'string' && v) return v; return ''; };
     return {
       code: Number(e.code) || 0,
       errorType: pick(md.error_type, md.errorType),
       providerCode: pick(md.provider_code, md.providerCode),
+      providerName: pick(md.provider_name, md.providerName),
       message: typeof e.message === 'string' ? e.message : '',
     };
   } catch (x) {
-    return { code: 0, errorType: '', providerCode: '', message: '' };
+    return { code: 0, errorType: '', providerCode: '', providerName: '', message: '' };
   }
 }
-function rateLimitScope(info) {
-  // 'provider': the upstream provider's own code is surfaced — that model's
-  //   serving provider throttled us (a different model/provider may succeed).
-  // 'platform': a typed OpenRouter rate-limit error with no provider code —
-  //   OpenRouter's own key/model limiter fired (same key serves the fallback,
-  //   so it is less likely to help, but still allowed once: free-tier limits
-  //   are usually per-model capacity).
-  // 'unknown': body unparseable or untyped — reported honestly as such.
-  if (info.providerCode) return 'provider';
-  if (info.errorType === 'rate_limit_exceeded') return 'platform';
+// Rate-limit response headers, captured server-side on upstream 429s.
+// OpenRouter documents X-RateLimit-Limit / -Remaining / -Reset on throttled
+// responses. Values are reported raw (finite numbers) or null when the
+// header is absent/unparseable — the daily-vs-per-minute call is made from
+// the OBSERVED values in the incident report, never guessed in code.
+function parseRateLimitHeaders(headers) {
+  const out = { limit: null, remaining: null, reset: null };
+  const rawOf = (key) => {
+    try {
+      if (headers && typeof headers.get === 'function') {
+        const v = headers.get(key);
+        return (v === null || v === undefined) ? '' : String(v);
+      }
+      if (headers && typeof headers === 'object') {
+        const want = key.toLowerCase();
+        for (const k of Object.keys(headers)) {
+          if (k.toLowerCase() === want && headers[k] !== undefined && headers[k] !== null && headers[k] !== '') return String(headers[k]);
+        }
+      }
+    } catch (e) {}
+    return '';
+  };
+  const numOf = (key) => {
+    const raw = rawOf(key).trim();
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  };
+  out.limit = numOf('x-ratelimit-limit');
+  out.remaining = numOf('x-ratelimit-remaining');
+  out.reset = numOf('x-ratelimit-reset');
+  return out;
+}
+function hasRateLimitHeaders(rl) {
+  return !!rl && (rl.limit !== null || rl.remaining !== null || rl.reset !== null);
+}
+function rateLimitScope(info, rl) {
+  // 'platform': OpenRouter's own limiter spoke — via its documented
+  //   X-RateLimit-* headers, or a typed platform error with no provider data.
+  // 'provider': the serving provider throttled us (provider_code/name
+  //   present, no platform headers) — a different vendor may succeed.
+  // 'unknown': neither signal present — reported honestly as such.
+  if (hasRateLimitHeaders(rl)) return 'platform';
+  if (info && (info.providerCode || info.providerName)) return 'provider';
+  if (info && info.errorType === 'rate_limit_exceeded') return 'platform';
   return 'unknown';
 }
 // Fills a 429 error with consistent safe diagnostics. Returns the parsed
 // upstream info for logging. Never touches keys, headers, or prompts.
-function attachRateLimitContext(e, errText, retryAfterSecs, triedModels, selectedModel, corrId) {
+function attachRateLimitContext(e, errText, retryAfterSecs, triedModels, selectedModel, corrId, rl) {
   const info = parseUpstreamErrorBody(errText);
   e.status = 429;
   e.code = 'UPSTREAM_RATE_LIMIT';
   e.model = selectedModel;
   e.corrId = corrId;
   e.triedModels = triedModels;
-  e.scope = rateLimitScope(info);
+  e.scope = rateLimitScope(info, rl);
   if (info.errorType) e.upstreamType = info.errorType;
+  if (info.providerCode) e.providerCode = info.providerCode;
+  if (info.providerName) e.providerName = info.providerName;
+  if (hasRateLimitHeaders(rl)) e.rateLimit = { limit: rl.limit, remaining: rl.remaining, reset: rl.reset };
   if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
   return info;
 }
@@ -240,8 +286,13 @@ function normalizeContent(content) {
   return content;
 }
 
-async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = null) {
+async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = null, diagAction = '') {
   const corrId = newCorrelationId();
+  // TEMP-DIAG (missing-response investigation): optional action label, used
+  // ONLY in the structured log lines below so Vercel logs join each upstream
+  // call to its /api/ai action. Never sent upstream, never logged with
+  // prompts/keys/bodies. Remove when the investigation closes.
+  const diagTag = diagAction ? ` action=${diagAction}` : ' action=legacy';
   const apiKey = getApiKey();
   if (!apiKey) {
     const e = new Error('OPENROUTER_API_KEY environment variable is not set. Add it in Vercel → Settings → Environment Variables (Production + Preview) and redeploy.');
@@ -345,13 +396,13 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
       attachUpstreamContext(e, triedModels, selectedModel, corrId);
       if (canRetry) {
         console.warn(`[${corrId}] Timeout on ${selectedModel}, retrying with ${nextModelFor()}...`);
-        return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+        return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
       }
       throw e;
     }
     if (canRetry && !isAuthErrorMessage(err && err.message)) {
       console.warn(`[${corrId}] Network error on attempt ${attempt} (${selectedModel}): ${err.message}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     }
     throw err;
   }
@@ -359,9 +410,21 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
   if (!response.ok) {
     const errText = await response.text().catch(() => '');
     const retryAfterSecs = parseRetryAfterSecs(response.headers);
+    // Rate-limit response headers, captured server-side on upstream 429s
+    // (absent object otherwise). Decides platform-vs-provider scope below.
+    const rlHeaders = response.status === 429 ? parseRateLimitHeaders(response.headers) : { limit: null, remaining: null, reset: null };
     const upInfo = response.status === 429 ? parseUpstreamErrorBody(errText) : null;
-    const scopeBit = upInfo ? ` scope=${rateLimitScope(upInfo)}${upInfo.errorType ? ` type=${upInfo.errorType}` : ''}` : '';
+    const scopeBit = upInfo ? ` scope=${rateLimitScope(upInfo, rlHeaders)}${upInfo.errorType ? ` type=${upInfo.errorType}` : ''}` : '';
     console.warn(`[${corrId}] Model ${selectedModel} returned HTTP ${response.status}${retryAfterSecs ? ` (Retry-After: ${retryAfterSecs}s)` : ''}${scopeBit}: ${upstreamPreview(errText)}`);
+    // TEMP-DIAG: one structured line per non-OK upstream response. Fields:
+    // action (from /api/ai), upstream HTTP status, model, corrId, sanitized
+    // error type (parsed code only — never body text), Retry-After secs,
+    // X-RateLimit-Limit/Remaining/Reset as observed (null when absent),
+    // provider_name/provider_code as observed (empty when absent).
+    try {
+      const _di = parseUpstreamErrorBody(errText);
+      console.warn(`[TEMP-DIAG]${diagTag} upstreamStatus=${response.status} model=${selectedModel} corrId=${corrId} errType=${_di.errorType || ('code' + (_di.code || response.status))} retryAfterSec=${retryAfterSecs} rlLimit=${rlHeaders.limit === null ? 'null' : rlHeaders.limit} rlRemaining=${rlHeaders.remaining === null ? 'null' : rlHeaders.remaining} rlReset=${rlHeaders.reset === null ? 'null' : rlHeaders.reset} providerName=${_di.providerName || 'none'} providerCode=${_di.providerCode || 'none'}`);
+    } catch (e) {}
     // Structured classification FIRST so every failure below carries the
     // contract code even when it also gets a local single-fallback attempt.
     const classified = classifyUpstreamFailure(response.status, errText);
@@ -372,8 +435,11 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
       e.corrId = corrId;
       e.triedModels = [...triedModels, selectedModel].slice(0, 5);
       const upInfo2 = parseUpstreamErrorBody(errText);
-      e.scope = rateLimitScope(upInfo2);
+      e.scope = rateLimitScope(upInfo2, rlHeaders);
       if (upInfo2.errorType) e.upstreamType = upInfo2.errorType;
+      if (upInfo2.providerCode) e.providerCode = upInfo2.providerCode;
+      if (upInfo2.providerName) e.providerName = upInfo2.providerName;
+      if (hasRateLimitHeaders(rlHeaders)) e.rateLimit = { limit: rlHeaders.limit, remaining: rlHeaders.remaining, reset: rlHeaders.reset };
       if (retryAfterSecs > 0) e.retryAfter = retryAfterSecs;
       return e;
     };
@@ -397,7 +463,7 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     }
     if (isRetryableStatus(response.status) && canRetry) {
       console.log(`[${corrId}] Retrying with fallback model ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     }
     const e = applyClass(new Error(classified.message));
     throw e;
@@ -414,7 +480,7 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     attachUpstreamContext(err, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Non-JSON from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     }
     throw err;
   }
@@ -430,7 +496,11 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
       // Same no-second-request rule as HTTP 429 above: the gateway already
       // had its fall-through chance via the `models` array in this request.
       const retryAfterSecs = parseRetryAfterSecs(response.headers);
+      const rlBody = parseRateLimitHeaders(response.headers);
       const bodyText = JSON.stringify(data.error);
+      try {
+        console.warn(`[TEMP-DIAG]${diagTag} upstreamStatus=200-body-429 model=${selectedModel} corrId=${corrId} errType=${bodyInfo.errorType || ('code' + (bodyInfo.code || 429))} retryAfterSec=${retryAfterSecs} rlLimit=${rlBody.limit === null ? 'null' : rlBody.limit} rlRemaining=${rlBody.remaining === null ? 'null' : rlBody.remaining} rlReset=${rlBody.reset === null ? 'null' : rlBody.reset} providerName=${bodyInfo.providerName || 'none'} providerCode=${bodyInfo.providerCode || 'none'}`);
+      } catch (x) {}
       const cls = isDailyCapMessage(bodyText, bodyInfo)
         ? { code: 'daily_limit', httpStatus: 429, message: "The AI's free daily limit has been reached. It resets daily — please try again later." }
         : { code: 'rate_limited', httpStatus: 429, message: 'The AI is busy. Please try again later.' };
@@ -439,13 +509,13 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
       // attachRateLimitContext fills scope/model/corrId/retryAfter diagnostics
       // (it also stamps the legacy UPSTREAM_RATE_LIMIT marker, which is kept
       // for older clients) — then restore the contract code on top.
-      attachRateLimitContext(e, bodyText, retryAfterSecs, [...triedModels, selectedModel], selectedModel, corrId);
+      attachRateLimitContext(e, bodyText, retryAfterSecs, [...triedModels, selectedModel], selectedModel, corrId, rlBody);
       e.code = cls.code;
       throw e;
     }
     if (!isAuthErrorMessage(msg) && canRetry) {
       console.warn(`[${corrId}] Provider error on ${selectedModel}: ${upstreamPreview(msg)}. Retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     }
     // Classify the terminal provider error the same way as an HTTP failure
     // so a 200-with-error-body never surfaces as a generic 502.
@@ -464,7 +534,7 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Missing choices/message from ${selectedModel}, retrying with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     }
     throw e;
   }
@@ -479,10 +549,17 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     e.status = 502;
     e.code = 'bad_response';
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
-    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+    if (canRetry) return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     throw e;
   }
   console.log(`[${corrId}] ${selectedModel} HTTP 200 ${metaLog(meta)}`);
+  // TEMP-DIAG: one structured line per HTTP-200 upstream response, BEFORE
+  // content extraction — this is the line that settles "tokens logged but
+  // nothing displayed": contentExists/contentLen/finishReason show exactly
+  // what shape arrived. No bodies, prompts, or keys.
+  try {
+    console.log(`[TEMP-DIAG]${diagTag} upstreamStatus=200 model=${selectedModel} corrId=${corrId} contentExists=${meta.contentType !== 'null' && meta.contentType !== 'missing'} contentType=${meta.contentType} contentLen=${meta.contentLen} finishReason=${meta.finishReason || 'none'} refusal=${meta.hasRefusal ? 'yes' : 'no'}`);
+  } catch (e) {}
 
   if (meta.hasRefusal || REFUSAL_FINISH_REASONS.includes(meta.finishReason || '')) {
     // A refusal or safety-filter stop is decisive: trying another model to
@@ -506,7 +583,7 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] Null content from ${selectedModel}, retrying once with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     }
     throw e;
   }
@@ -525,7 +602,7 @@ async function callOpenRouter(prompt, model = null, attempt = 0, _triedModels = 
     attachUpstreamContext(e, triedModels, selectedModel, corrId);
     if (canRetry) {
       console.warn(`[${corrId}] ${metaLog(meta)} from ${selectedModel}, retrying once with ${nextModelFor()}...`);
-      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel]);
+      return callOpenRouter(prompt, withNextModel(), attempt + 1, [...triedModels, selectedModel], diagAction);
     }
     throw e;
   }
@@ -640,4 +717,4 @@ function cleanMathFormatting(text) {
     .trim();
 }
 
-module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, attachUpstreamContext, parseUpstreamErrorBody, rateLimitScope, classifyUpstreamFailure, getModels, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };
+module.exports = { callOpenRouter, parseJSON, cleanMathFormatting, normalizeContent, describeUpstreamResult, attachUpstreamContext, parseUpstreamErrorBody, rateLimitScope, parseRateLimitHeaders, hasRateLimitHeaders, classifyUpstreamFailure, getModels, modelVendor, FORMAT_STANDARD, STUVO_TUTOR_VOICE, getApiKey, MODELS, REQUEST_TIMEOUT_MS, parseRetryAfterSecs, upstreamPreview };

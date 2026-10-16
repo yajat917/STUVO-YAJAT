@@ -1448,6 +1448,7 @@ function bindLearn(container, ctx) {
         revCheckState = {};
         try {
             const data = await safeApiCall('/api/ai', { action: 'generateRevision', subject, chapter, grade: ctx.grade, languageName: ctx.languageName });
+            if (progress) progress.style.display = 'none';
             var checklist = Array.isArray(data.checklist) ? data.checklist : [];
             output.innerHTML = `
                 <div class="glass-card" style="margin-top:12px;">

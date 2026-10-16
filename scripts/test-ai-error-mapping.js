@@ -350,6 +350,219 @@ async function expectCall(name, stubs, fn, check) {
     console.log('ok - client messages render through t() with interpolation');
   }
 
+  // 24. Success path end-to-end: upstream plain text → doubt {answer}.
+  // Proves the contract fields the website reads when upstream is healthy.
+  {
+    stubQueue = [
+      resp({ status: 200, json: { choices: [{ message: { content: '1. Add 2 and 2.\nAnswer: 4' }, finish_reason: 'stop' }] } }),
+    ];
+    const res = mockRes();
+    await aiHandler({ method: 'POST', body: { action: 'doubt', question: '2+2?' } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    assert(/Answer: 4/.test(res.data.answer), 'got: ' + JSON.stringify(res.data));
+    passed++;
+    console.log('ok - doubt success end-to-end returns {answer}');
+  }
+
+  // 25. Quiz with prose-wrapped + fenced JSON array (realistic free-model
+  // output) → {questions} parsed. This is the "tokens logged but site
+  // empty" parse path: if THIS passes, a quiz failure means the upstream
+  // shape itself was unusable (null/empty), not our parser.
+  {
+    const fence = 'Here are your questions:\n```json\n[{"question":"Q1?","options":["A","B","C","D"],"correctIndex":1,"explanation":"E1"},{"question":"Q2?","options":["A","B","C","D"],"correctIndex":0,"explanation":"E2"}]\n```\nGood luck!';
+    stubQueue = [resp({ status: 200, json: { choices: [{ message: { content: fence }, finish_reason: 'stop' }] } })];
+    const res = mockRes();
+    await aiHandler({ method: 'POST', body: { action: 'generateQuiz', topic: 'T', questionCount: 2 } }, res);
+    assert.strictEqual(res.statusCode, 200);
+    assert(Array.isArray(res.data.questions) && res.data.questions.length === 2, 'got: ' + JSON.stringify(res.data).slice(0, 200));
+    passed++;
+    console.log('ok - quiz parses prose-wrapped fenced JSON array');
+  }
+
+  // 26. Quiz with UNPARSABLE text → bad_response contract (never blank).
+  {
+    stubQueue = [resp({ status: 200, json: { choices: [{ message: { content: 'Sorry, I cannot do that right now.' }, finish_reason: 'stop' }] } })];
+    const res = mockRes();
+    await aiHandler({ method: 'POST', body: { action: 'generateQuiz', topic: 'T', questionCount: 2 } }, res);
+    assert.strictEqual(res.statusCode, 502);
+    assert.strictEqual(res.data.ok, false);
+    assert.strictEqual(res.data.code, 'bad_response');
+    passed++;
+    console.log('ok - quiz unparsable text → bad_response, never blank');
+  }
+
+  // 27. Exotic shape: choices[0].message as STRING → bad_response (documented).
+  {
+    stubQueue = [resp({ status: 200, json: { choices: [{ message: 'just a string', finish_reason: 'stop' }] } })];
+    try {
+      await or.callOpenRouter('hi', 'only-model-never-exists', 99, ['only-model-never-exists']);
+      assert.fail('should throw');
+    } catch (e) {
+      assert.strictEqual(e.code, 'bad_response');
+    }
+    passed++;
+    console.log('ok - string-typed message → bad_response');
+  }
+
+  // 28. Refusal (content_filter) → upstream_error, exactly 1 fetch (never
+  // retried to get around a safety stop).
+  {
+    stubQueue = [resp({ status: 200, json: { choices: [{ message: { content: '', refusal: 'filtered' }, finish_reason: 'content_filter' }] } })];
+    seenRequests.length = 0;
+    try {
+      await or.callOpenRouter('hi');
+      assert.fail('should throw');
+    } catch (e) {
+      assert.strictEqual(e.code, 'upstream_error');
+      assert(/declined|rephras/i.test(e.message));
+    }
+    assert.strictEqual(seenRequests.length, 1, 'refusals are never retried');
+    passed++;
+    console.log('ok - refusal → upstream_error, single fetch');
+  }
+
+  // 29. Unexpected provider shape: HTTP-200 error body (non-429) → classified.
+  {
+    stubQueue = [
+      resp({ status: 200, json: { error: { code: 500, message: 'provider exploded' } } }),
+      resp({ status: 200, json: { error: { code: 500, message: 'provider exploded' } } }),
+    ];
+    seenRequests.length = 0;
+    try {
+      await or.callOpenRouter('hi', 'only-model-never-exists', 99, ['only-model-never-exists']);
+      assert.fail('should throw');
+    } catch (e) {
+      assert.strictEqual(e.code, 'upstream_error');
+      assert.strictEqual(e.status, 502);
+    }
+    assert(seenRequests.length <= 1, 'exhausted models: single fetch, got ' + seenRequests.length);
+    passed++;
+    console.log('ok - 200-with-error-body → upstream_error');
+  }
+
+  // 30. Multipart array content ([{type:text,text}]) → normalized to text.
+  {
+    stubQueue = [resp({ status: 200, json: { choices: [{ message: { content: [{ type: 'text', text: 'Hello ' }, { type: 'text', text: 'world' }] }, finish_reason: 'stop' }] } })];
+    const out = await or.callOpenRouter('hi', 'only-model-never-exists', 99, ['only-model-never-exists']);
+    assert.strictEqual(out, 'Hello world');
+    passed++;
+    console.log('ok - array content parts normalized to text');
+  }
+
+  // 31. TEMP-DIAG instrumentation emits joined action lines (no PII).
+  {
+    const lines = [];
+    const origLog = console.log, origWarn = console.warn, origErr = console.error;
+    console.log = (...a) => { lines.push(a.join(' ')); };
+    console.warn = (...a) => { lines.push(a.join(' ')); };
+    console.error = (...a) => { lines.push(a.join(' ')); };
+    try {
+      stubQueue = [resp({ status: 200, json: { choices: [{ message: { content: 'ok text' }, finish_reason: 'stop' }] } })];
+      await aiHandler({ method: 'POST', body: { action: 'doubt', question: 'x?' } }, mockRes());
+      stubQueue = [resp({ status: 429, json: { error: { code: 429, message: 'Rate limit exceeded' } } })];
+      await aiHandler({ method: 'POST', body: { action: 'generateQuiz', topic: 'T' } }, mockRes());
+    } finally {
+      console.log = origLog; console.warn = origWarn; console.error = origErr;
+    }
+    const diag = lines.filter(l => l.includes('[TEMP-DIAG]'));
+    assert(diag.some(l => /action=doubt/.test(l) && /upstreamStatus=200/.test(l) && /contentExists=true/.test(l) && /contentLen=\d+/.test(l) && /finishReason=stop/.test(l)), 'doubt success line: ' + diag.join(' || '));
+    assert(diag.some(l => /action=generateQuiz/.test(l) && /upstreamStatus=429/.test(l)), 'quiz 429 line: ' + diag.join(' || '));
+    assert(diag.some(l => /clientStatus=429/.test(l) && /code=rate_limited/.test(l)), 'client error line: ' + diag.join(' || '));
+    const blob = diag.join('\n');
+    assert(!/sk-or/i.test(blob) && !/Bearer/i.test(blob), 'no key material in diag lines');
+    passed++;
+    console.log('ok - TEMP-DIAG lines join action/status/model/content-shape, no PII');
+  }
+
+  // 33. Vendor-diversity rule: same-vendor fallback warns; distinct vendors quiet.
+  {
+    const warns = [];
+    const origWarn = console.warn;
+    console.warn = (...a) => { warns.push(a.join(' ')); };
+    try {
+      assert.strictEqual(or.modelVendor('google/gemma-4-31b-it:free'), 'google');
+      assert.strictEqual(or.modelVendor('openai/gpt-oss-20b:free'), 'openai');
+      process.env.OPENROUTER_MODEL = 'google/gemma-4-31b-it:free';
+      process.env.OPENROUTER_FALLBACK_MODEL = 'google/gemma-4-26b-a4b-it:free';
+      or.getModels();
+      assert(warns.some(w => w.includes('[AI-CONFIG]')), 'same-vendor chain must warn, got: ' + warns.join(' || '));
+      warns.length = 0;
+      process.env.OPENROUTER_MODEL = 'openai/gpt-oss-20b:free';
+      process.env.OPENROUTER_FALLBACK_MODEL = 'qwen/qwen3-30b-a3b:free';
+      const pair = or.getModels();
+      assert.strictEqual(warns.length, 0, 'distinct vendors must not warn, got: ' + warns.join(' || '));
+      assert.notStrictEqual(or.modelVendor(pair[0]), or.modelVendor(pair[1]));
+    } finally {
+      console.warn = origWarn;
+      delete process.env.OPENROUTER_MODEL;
+      delete process.env.OPENROUTER_FALLBACK_MODEL;
+    }
+    passed++;
+    console.log('ok - vendor-diversity rule warns on same-vendor chain');
+  }
+
+  // 34. 429 WITH X-RateLimit-* headers → scope platform + values carried.
+  {
+    stubQueue = [
+      resp({ status: 429, json: { error: { code: 429, message: 'Rate limit exceeded', metadata: {} } }, headers: { 'retry-after': '20', 'x-ratelimit-limit': '20', 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1710000060' } }),
+    ];
+    seenRequests.length = 0;
+    try {
+      await or.callOpenRouter('hi');
+      assert.fail('should throw');
+    } catch (e) {
+      assert.strictEqual(e.code, 'rate_limited');
+      assert.strictEqual(e.scope, 'platform', 'headers present must mean platform, got: ' + e.scope);
+      assert.deepStrictEqual(e.rateLimit, { limit: 20, remaining: 0, reset: 1710000060 });
+    }
+    assert.strictEqual(seenRequests.length, 1);
+    passed++;
+    console.log('ok - 429 + X-RateLimit headers → scope platform with values');
+  }
+
+  // 35. 429 with provider metadata, NO platform headers → scope provider.
+  {
+    stubQueue = [
+      resp({ status: 429, json: { error: { code: 429, message: 'Provider returned rate limit error', metadata: { provider_name: 'Google', provider_code: 'RESOURCE_EXHAUSTED' } } } }),
+    ];
+    try {
+      await or.callOpenRouter('hi', 'only-model-never-exists', 99, ['only-model-never-exists']);
+      assert.fail('should throw');
+    } catch (e) {
+      assert.strictEqual(e.code, 'rate_limited');
+      assert.strictEqual(e.scope, 'provider', 'provider metadata must mean provider, got: ' + e.scope);
+      assert.strictEqual(e.providerName, 'Google');
+      assert.strictEqual(e.providerCode, 'RESOURCE_EXHAUSTED');
+      assert.strictEqual(e.rateLimit, undefined, 'no headers means no rateLimit object');
+    }
+    passed++;
+    console.log('ok - 429 + provider metadata, no headers → scope provider');
+  }
+
+  // 36. Bare 429 (no headers, no metadata) → scope stays unknown (honest).
+  {
+    stubQueue = [
+      resp({ status: 429, json: { error: { code: 429, message: 'Slow down' } } }),
+    ];
+    try {
+      await or.callOpenRouter('hi', 'only-model-never-exists', 99, ['only-model-never-exists']);
+      assert.fail('should throw');
+    } catch (e) {
+      assert.strictEqual(e.scope, 'unknown', 'got: ' + e.scope);
+    }
+    passed++;
+    console.log('ok - bare 429 → scope unknown');
+  }
+
+  // 37. parseRateLimitHeaders: plain-object headers + garbage tolerance.
+  {
+    assert.deepStrictEqual(or.parseRateLimitHeaders({ 'X-RateLimit-Limit': '20', 'x-ratelimit-remaining': '5', 'X-RATELIMIT-RESET': 'abc' }), { limit: 20, remaining: 5, reset: null });
+    assert.deepStrictEqual(or.parseRateLimitHeaders({}), { limit: null, remaining: null, reset: null });
+    assert.deepStrictEqual(or.parseRateLimitHeaders(null), { limit: null, remaining: null, reset: null });
+    passed++;
+    console.log('ok - parseRateLimitHeaders tolerates shapes');
+  }
+
   console.log(`\nAll ${passed} stubbed error-mapping cases passed. Real completion requests used: 0.`);
 })().catch((e) => {
   console.error('FAIL:', e);
