@@ -44,7 +44,7 @@ getApiKey();
 // not a request-shape bug — the parser already handles the documented
 // string/array content schema correctly. Do not re-add it without live
 // verification that it returns non-empty `content` consistently.
-const DEFAULT_PRIMARY_MODEL = "NVIDIA: Nemotron 3.5 Super VL (free)";
+const DEFAULT_PRIMARY_MODEL = "NVIDIA: Nemotron 3 Super (free)";
 const DEFAULT_FALLBACK_MODEL = "NVIDIA: Nemotron 3 Super (free)";
 // Resolved per request (not once at module load) so a rotated env var takes
 // effect without a redeploy-restart on long-lived hosts, and so the loop
