@@ -1,0 +1,8 @@
+{
+  "name": "stuvo",
+  "version": "1.0.0",
+  "description": "Stuvo — AI-powered study platform",
+  "scripts": {
+    "test": "node api/_lib/prompts.test.js"
+  }
+}
